@@ -1,0 +1,15 @@
+[package]
+name = "diskgoblin-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "diskgoblin"
+path = "src/main.rs"
+
+[dependencies]
+diskgoblin-core.workspace = true
+
+[lints]
+workspace = true
