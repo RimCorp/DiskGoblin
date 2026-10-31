@@ -26,7 +26,7 @@ Per [`docs/architecture.md` §4.3](../architecture.md) and [`ADR-004`](../decisi
 
 ## Dependencies
 - `DG-002` (Core types)
-- `DG-005` (Sequential scanner)
+- `DG-006` (Sequential scanner & `scan_directory` entry point)
 
 ## Implementation guidance
 - Check `cancel.is_cancelled()` at the start of each directory visit and every `256` entries within a directory so even huge flat directories abort promptly without checking `Instant::now()` on every single file.

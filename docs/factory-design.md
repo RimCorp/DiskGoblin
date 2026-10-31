@@ -56,18 +56,33 @@ To enable parallel agent execution without workspace collisions or Cargo build-c
 
 ---
 
-## 4. Permission Model & Safety Guardrails
+## 4. Permission Model & Enforced Security Guardrails
 
-| Capability | Coding Agent Permission | Enforcement Mechanism |
+Prompts (`AGENTS.md`) define behavioral expectations, not a security boundary. The factory enforces hard technical controls across four layers:
+
+1. **OS & Harness Sandbox Isolation:**
+   - **Codex CLI:** Always invoked with `--sandbox workspace-write --ask-for-approval never` (or scoped approval), restricting filesystem writes strictly to the isolated Git worktree directory and `$CARGO_TARGET_DIR`.
+   - **OpenCode:** Executed inside the target worktree directory with destructive host commands forbidden.
+2. **Scoped GitHub Credentials & Branch Protection:**
+   - The `main` branch on `RimCorp/DiskGoblin` is protected via GitHub branch rules: direct pushes are blocked, status checks (`ci.yml`) must pass, and PRs require approval.
+   - Coding agent executions do not receive permission to run `gh pr merge` or mutate repository settings.
+3. **Orchestrator Pre-Dispatch Dependency Gate (`scripts/check-dispatch-ready.sh`):**
+   - The orchestrator **never** relies solely on the `status:ready` GitHub label. Before creating a worktree or launching an agent for `DG-XXX`, it parses `## Dependencies` directly from `docs/backlog/DG-XXX-*.md` and verifies via GitHub API / `git log origin/main` that every upstream issue is `CLOSED` and merged into `origin/main`.
+4. **Automated Post-Run Scope & Diff Verification:**
+   - Before a PR is accepted for review, the orchestrator inspects `git diff --name-only origin/main...HEAD` against the issue's allowed `## Scope` and checks `Cargo.lock` for unauthorized dependency additions.
+5. **Day-One Telemetry Capture (`docs/experiments/runs/`):**
+   - Telemetry recording starts with **Run #1 (`DG-001`)**, not in `M4`. Even before `DG-017` builds the Rust summary analyzer, the orchestrator writes a structured JSON run log (`docs/experiments/runs/<timestamp>_<issue>_<harness>_<model>.json`) immediately upon every agent run completion.
+
+| Capability | Coding Agent Permission | Technical Enforcement Mechanism |
 |---|---|---|
-| Read repository files & docs | **Allowed** | Sandboxed to worktree directory |
-| Edit source & test files within issue scope | **Allowed** | Verified against issue `Scope` in PR review |
+| Read repository files & docs | **Allowed** | OS/Harness sandbox (`workspace-write`) |
+| Edit source & test files within issue scope | **Allowed** | Post-run `git diff --name-only` scope check + CI |
 | Run `cargo fmt`, `cargo clippy`, `cargo test`, `cargo bench` | **Allowed** | Local shell execution inside worktree |
-| Add new crate dependencies to `Cargo.toml` | **Restricted** | Allowed **only** if explicitly authorized in the issue spec; otherwise must escalate as `Blocked` |
+| Add new crate dependencies to `Cargo.toml` | **Restricted** | Verified via `git diff Cargo.toml Cargo.lock` against issue spec |
 | Modify `.github/workflows/` | **Restricted** | Forbidden except in CI-specific issues (`DG-001`, `DG-014`) |
-| Push feature branch & open Pull Request (`gh pr create`) | **Allowed** | Branch protection prevents pushing to `main` |
-| Merge Pull Request (`gh pr merge`) | **Forbidden** | Agents must **never** merge their own PRs; enforced by `AGENTS.md` and GitHub branch protection |
-| Destructive host commands (`rm -rf ~`, `sudo`, network exfiltration) | **Forbidden** | Harness sandbox policies (`codex --sandbox workspace-write`, OpenCode permissions) |
+| Push feature branch & open Pull Request (`gh pr create`) | **Allowed** | Allowed on `feat/*`, `chore/*`, `fix/*` branches only |
+| Merge Pull Request (`gh pr merge`) | **Forbidden** | Enforced by GitHub `main` branch protection & orchestrator policy |
+| Destructive host commands (`rm -rf ~`, `sudo`, network exfiltration) | **Forbidden** | Harness OS sandbox (`codex --sandbox workspace-write`) |
 
 ---
 
