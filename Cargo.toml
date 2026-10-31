@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/diskgoblin-core", "crates/diskgoblin-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+diskgoblin-core = { path = "crates/diskgoblin-core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
