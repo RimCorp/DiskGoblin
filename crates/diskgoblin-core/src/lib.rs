@@ -5,6 +5,7 @@ pub mod error;
 pub mod format;
 pub mod model;
 pub mod platform;
+pub mod scanner;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_fixtures;
 
