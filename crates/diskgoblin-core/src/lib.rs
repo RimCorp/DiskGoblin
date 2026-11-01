@@ -1,5 +1,6 @@
 //! Core library for DiskGoblin.
 
+pub mod aggregator;
 pub mod config;
 pub mod error;
 pub mod format;
@@ -18,6 +19,11 @@ pub use platform::{extract_metadata, EntryKind, FileId, RawMetadata};
 /// Returns the core library's package version.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Scan a directory with deterministic sequential traversal and bounded rankings.
+pub fn scan_directory(options: &ScanOptions) -> Result<ScanReport, FatalScanError> {
+    aggregator::scan(options)
 }
 
 #[cfg(test)]
