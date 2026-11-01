@@ -9,6 +9,7 @@ test-utils = ["dep:tempfile"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tempfile = { version = "3", optional = true }
 thiserror = "2"
 

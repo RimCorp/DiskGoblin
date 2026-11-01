@@ -12,7 +12,10 @@ pub mod test_fixtures;
 
 pub use config::{ScanOptions, SizeMetric};
 pub use error::{FatalScanError, ScanErrorKind, ScanErrorRecord};
-pub use format::{format_bytes, format_percentage, render_ascii_bar, UnitSystem};
+pub use format::{
+    format_bytes, format_percentage, render_ascii_bar, report_to_json_pretty,
+    report_to_json_writer, UnitSystem, REPORT_SCHEMA_VERSION,
+};
 pub use model::{DirNode, DirSummary, FileEntry, ScanReport};
 pub use platform::{extract_metadata, EntryKind, FileId, RawMetadata};
 
