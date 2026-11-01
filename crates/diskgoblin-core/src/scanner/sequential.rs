@@ -1,7 +1,8 @@
 //! Deterministic, read-only, iterative depth-first traversal.
 use super::{TraversalEvent, TraversalStats, VisitedDir, VisitedEntry};
 use crate::{
-    extract_metadata, EntryKind, FatalScanError, RawMetadata, ScanErrorRecord, ScanOptions,
+    extract_metadata, CancelToken, EntryKind, FatalScanError, RawMetadata, ScanErrorRecord,
+    ScanOptions,
 };
 use std::{
     fs, io,
@@ -28,14 +29,27 @@ pub fn scan(
     options: &ScanOptions,
     visit: impl FnMut(TraversalEvent),
 ) -> Result<TraversalStats, FatalScanError> {
-    scan_with_metadata(options, visit, |_, metadata| Ok(extract_metadata(metadata)))
+    scan_with_cancel(options, &CancelToken::new(), visit)
+}
+
+/// Traverse while checking cancellation at directory boundaries and every 256 entries.
+pub fn scan_with_cancel(
+    options: &ScanOptions,
+    cancel: &CancelToken,
+    visit: impl FnMut(TraversalEvent),
+) -> Result<TraversalStats, FatalScanError> {
+    scan_with_metadata(options, cancel, visit, |_, metadata| {
+        Ok(extract_metadata(metadata))
+    })
 }
 
 fn scan_with_metadata(
     options: &ScanOptions,
+    cancel: &CancelToken,
     mut visit: impl FnMut(TraversalEvent),
     mut extract: impl FnMut(&Path, &fs::Metadata) -> io::Result<RawMetadata>,
 ) -> Result<TraversalStats, FatalScanError> {
+    check_cancel(cancel)?;
     let root = &options.root_path;
     let unreadable = |source| FatalScanError::RootUnreadable {
         path: root.clone(),
@@ -68,9 +82,22 @@ fn scan_with_metadata(
         depth: 0,
         metadata: raw,
     }));
-    let mut stack = vec![frame(0, root.clone(), 0, entries, &mut visit, &mut stats)];
+    let mut stack = vec![frame(
+        0,
+        root.clone(),
+        0,
+        entries,
+        &mut visit,
+        &mut stats,
+        cancel,
+    )?];
+    let mut entries_seen = 0usize;
     let mut next_id = 1;
     while let Some(mut current) = stack.pop() {
+        if entries_seen & 255 == 0 {
+            check_cancel(cancel)?;
+        }
+        entries_seen = entries_seen.wrapping_add(1);
         let Some(path) = current.entries.next() else {
             visit(TraversalEvent::DirectoryFinished(VisitedDir {
                 id: current.id,
@@ -105,6 +132,7 @@ fn scan_with_metadata(
         }
         stack.push(current);
         if raw.kind == EntryKind::Directory {
+            check_cancel(cancel)?;
             let different_device = matches!((root_device, raw.file_id), (Some(root), Some(child)) if root != child.device_id);
             if options.one_file_system && different_device {
                 visit(TraversalEvent::DirectoryFinished(VisitedDir {
@@ -115,7 +143,9 @@ fn scan_with_metadata(
                 continue;
             }
             match fs::read_dir(&path) {
-                Ok(entries) => stack.push(frame(id, path, depth, entries, &mut visit, &mut stats)),
+                Ok(entries) => stack.push(frame(
+                    id, path, depth, entries, &mut visit, &mut stats, cancel,
+                )?),
                 Err(error) => {
                     let mut failed = Frame {
                         id,
@@ -131,6 +161,7 @@ fn scan_with_metadata(
             }
         }
     }
+    check_cancel(cancel)?;
     Ok(stats)
 }
 
@@ -141,7 +172,9 @@ fn frame(
     entries: fs::ReadDir,
     visit: &mut impl FnMut(TraversalEvent),
     stats: &mut TraversalStats,
-) -> Frame {
+    cancel: &CancelToken,
+) -> Result<Frame, FatalScanError> {
+    check_cancel(cancel)?;
     let mut result = Frame {
         id,
         path,
@@ -151,7 +184,10 @@ fn frame(
         fully_read: true,
     };
     let mut paths = Vec::new();
-    for entry in entries {
+    for (index, entry) in entries.enumerate() {
+        if index & 255 == 0 {
+            check_cancel(cancel)?;
+        }
         match entry {
             Ok(entry) => paths.push(entry.path()),
             // read_dir iteration errors do not supply a child filename.
@@ -162,9 +198,19 @@ fn frame(
             }
         }
     }
+    check_cancel(cancel)?;
     paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
     result.entries = paths.into_iter();
-    result
+    check_cancel(cancel)?;
+    Ok(result)
+}
+
+fn check_cancel(cancel: &CancelToken) -> Result<(), FatalScanError> {
+    if cancel.is_cancelled() {
+        Err(FatalScanError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn record_error(
@@ -202,6 +248,7 @@ mod tests {
             let mut events = Vec::new();
             let stats = scan_with_metadata(
                 &options,
+                &CancelToken::new(),
                 |event| events.push(event),
                 |path, metadata| {
                     let mut raw = extract_metadata(metadata);
@@ -222,6 +269,7 @@ mod tests {
         };
         let stats = scan_with_metadata(
             &options,
+            &CancelToken::new(),
             |event| events.push(event),
             |path, metadata| {
                 if path == fixture.path().join("mount") {

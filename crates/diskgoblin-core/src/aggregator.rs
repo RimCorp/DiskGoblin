@@ -1,7 +1,8 @@
 //! Streaming bottom-up rollups and bounded, deterministic top-N selection.
 use crate::{
     scanner::{sequential, TraversalEvent},
-    DirNode, DirSummary, EntryKind, FatalScanError, FileEntry, ScanOptions, ScanReport,
+    CancelToken, DirNode, DirSummary, EntryKind, FatalScanError, FileEntry, ProgressSink,
+    ScanOptions, ScanProgress, ScanReport, ThrottledProgressSink,
 };
 use std::{
     cmp::{Ordering, Reverse},
@@ -84,7 +85,11 @@ fn empty_node(path: PathBuf, depth: usize) -> DirNode {
 /// Directory inode bytes are excluded; symlinks contribute their own inode sizes.
 /// Directory counts exclude the directory itself. Pruning affects only the result
 /// tree: rankings and totals include every scanned depth.
-pub(crate) fn scan(options: &ScanOptions) -> Result<ScanReport, FatalScanError> {
+pub(crate) fn scan(
+    options: &ScanOptions,
+    cancel: &CancelToken,
+    sink: &dyn ProgressSink,
+) -> Result<ScanReport, FatalScanError> {
     let started = Instant::now();
     let mut stack: Vec<DirNode> = Vec::new();
     let mut root = empty_node(options.root_path.clone(), 0);
@@ -92,96 +97,140 @@ pub(crate) fn scan(options: &ScanOptions) -> Result<ScanReport, FatalScanError> 
     let mut files = BinaryHeap::new();
     let mut directories = BinaryHeap::new();
     let mut errors = Vec::new();
-    sequential::scan(options, |event| match event {
-        TraversalEvent::Entry(entry) => {
-            let raw = entry.metadata;
-            if raw.kind == EntryKind::Directory {
-                stack.push(empty_node(entry.path, entry.depth));
-                return;
-            }
-            if let Some(parent) = stack.last_mut() {
-                let deduplicated = raw.kind == EntryKind::File
-                    && raw.hard_link_count > 1
-                    && raw.file_id.is_some_and(|id| !hardlinks.insert(id));
-                match raw.kind {
-                    EntryKind::File => {
-                        parent.summary.file_count += 1;
-                        let file = FileEntry {
-                            path: entry.path,
-                            apparent_size: raw.apparent_size,
-                            allocated_size: raw.allocated_size,
-                            is_deduplicated_hardlink: deduplicated,
-                        };
-                        if !file.is_deduplicated_hardlink {
-                            offer(
-                                &mut files,
-                                file.clone(),
-                                options
-                                    .size_metric
-                                    .select(raw.apparent_size, raw.allocated_size),
-                                file.path,
-                                options,
-                            );
-                        }
-                    }
-                    EntryKind::Symlink => parent.summary.symlink_count += 1,
-                    EntryKind::Other | EntryKind::Directory => {}
+    let progress_sink = ThrottledProgressSink::new(sink);
+    let mut progress = ScanProgress::default();
+    let mut entries_seen = 0usize;
+    sequential::scan_with_cancel(options, cancel, |event| {
+        let transition = matches!(
+            &event,
+            TraversalEvent::DirectoryFinished(_)
+                | TraversalEvent::Entry(crate::scanner::VisitedEntry {
+                    metadata: crate::RawMetadata {
+                        kind: EntryKind::Directory,
+                        ..
+                    },
+                    ..
+                })
+        );
+        match &event {
+            TraversalEvent::Entry(entry) => {
+                entries_seen = entries_seen.wrapping_add(1);
+                match entry.metadata.kind {
+                    EntryKind::File => progress.files_seen += 1,
+                    EntryKind::Directory if entry.parent_id.is_some() => progress.dirs_seen += 1,
+                    EntryKind::Symlink => progress.symlinks_seen += 1,
+                    _ => {}
                 }
-                if !deduplicated {
-                    parent.summary.apparent_size += raw.apparent_size;
-                    parent.summary.allocated_size += raw.allocated_size;
+            }
+            TraversalEvent::Error { .. } => progress.errors_seen += 1,
+            _ => {}
+        }
+        match event {
+            TraversalEvent::Entry(entry) => {
+                let raw = entry.metadata;
+                if raw.kind == EntryKind::Directory {
+                    stack.push(empty_node(entry.path, entry.depth));
+                } else if let Some(parent) = stack.last_mut() {
+                    let deduplicated = raw.kind == EntryKind::File
+                        && raw.hard_link_count > 1
+                        && raw.file_id.is_some_and(|id| !hardlinks.insert(id));
+                    match raw.kind {
+                        EntryKind::File => {
+                            parent.summary.file_count += 1;
+                            let file = FileEntry {
+                                path: entry.path,
+                                apparent_size: raw.apparent_size,
+                                allocated_size: raw.allocated_size,
+                                is_deduplicated_hardlink: deduplicated,
+                            };
+                            if !file.is_deduplicated_hardlink {
+                                offer(
+                                    &mut files,
+                                    file.clone(),
+                                    options
+                                        .size_metric
+                                        .select(raw.apparent_size, raw.allocated_size),
+                                    file.path,
+                                    options,
+                                );
+                            }
+                        }
+                        EntryKind::Symlink => parent.summary.symlink_count += 1,
+                        EntryKind::Other | EntryKind::Directory => {}
+                    }
+                    if !deduplicated {
+                        progress.bytes_accumulated += options
+                            .size_metric
+                            .select(raw.apparent_size, raw.allocated_size);
+                        parent.summary.apparent_size += raw.apparent_size;
+                        parent.summary.allocated_size += raw.allocated_size;
+                    }
+                }
+            }
+            // Completion supplies the authoritative direct count, avoiding double counting.
+            TraversalEvent::Error { record, .. } => errors.push(record),
+            TraversalEvent::DirectoryFinished(dir) => {
+                if let Some(mut node) = stack.pop() {
+                    node.summary.error_count += dir.direct_error_count;
+                    node.children.sort_by(|a, b| {
+                        let size = |node: &DirNode| {
+                            options
+                                .size_metric
+                                .select(node.summary.apparent_size, node.summary.allocated_size)
+                        };
+                        size(b)
+                            .cmp(&size(a))
+                            .then_with(|| a.summary.path.cmp(&b.summary.path))
+                    });
+                    if let Some(parent) = stack.last_mut() {
+                        let child = &node.summary;
+                        offer(
+                            &mut directories,
+                            child.clone(),
+                            options
+                                .size_metric
+                                .select(child.apparent_size, child.allocated_size),
+                            child.path.clone(),
+                            options,
+                        );
+                        parent.summary.apparent_size += child.apparent_size;
+                        parent.summary.allocated_size += child.allocated_size;
+                        parent.summary.file_count += child.file_count;
+                        parent.summary.dir_count += child.dir_count + 1;
+                        parent.summary.symlink_count += child.symlink_count;
+                        parent.summary.error_count += child.error_count;
+                        if options.max_depth.is_none_or(|limit| child.depth <= limit) {
+                            parent.children.push(node);
+                        }
+                    } else {
+                        root = node;
+                    }
                 }
             }
         }
-        // Completion supplies the authoritative direct count, avoiding double counting.
-        TraversalEvent::Error { record, .. } => errors.push(record),
-        TraversalEvent::DirectoryFinished(dir) => {
-            if let Some(mut node) = stack.pop() {
-                node.summary.error_count += dir.direct_error_count;
-                node.children.sort_by(|a, b| {
-                    let size = |node: &DirNode| {
-                        options
-                            .size_metric
-                            .select(node.summary.apparent_size, node.summary.allocated_size)
-                    };
-                    size(b)
-                        .cmp(&size(a))
-                        .then_with(|| a.summary.path.cmp(&b.summary.path))
-                });
-                if let Some(parent) = stack.last_mut() {
-                    let child = &node.summary;
-                    offer(
-                        &mut directories,
-                        child.clone(),
-                        options
-                            .size_metric
-                            .select(child.apparent_size, child.allocated_size),
-                        child.path.clone(),
-                        options,
-                    );
-                    parent.summary.apparent_size += child.apparent_size;
-                    parent.summary.allocated_size += child.allocated_size;
-                    parent.summary.file_count += child.file_count;
-                    parent.summary.dir_count += child.dir_count + 1;
-                    parent.summary.symlink_count += child.symlink_count;
-                    parent.summary.error_count += child.error_count;
-                    if options.max_depth.is_none_or(|limit| child.depth <= limit) {
-                        parent.children.push(node);
-                    }
-                } else {
-                    root = node;
-                }
-            }
+        if transition || entries_seen & 255 == 0 {
+            progress.elapsed_ms = elapsed_ms(started);
+            progress_sink.on_progress(progress);
         }
     })?;
-    Ok(ScanReport {
+    let report = ScanReport {
         schema_version: 1,
         root_path: options.root_path.clone(),
         size_metric: options.size_metric,
-        duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        duration_ms: elapsed_ms(started),
         root,
         top_directories: sorted(directories),
         top_files: sorted(files),
         errors,
-    })
+    };
+    progress.elapsed_ms = report.duration_ms;
+    progress_sink.flush(progress);
+    if cancel.is_cancelled() {
+        return Err(FatalScanError::Cancelled);
+    }
+    Ok(report)
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
