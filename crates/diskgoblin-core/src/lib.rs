@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+pub mod format;
 pub mod model;
 pub mod platform;
 #[cfg(any(test, feature = "test-utils"))]
@@ -9,6 +10,7 @@ pub mod test_fixtures;
 
 pub use config::{ScanOptions, SizeMetric};
 pub use error::{FatalScanError, ScanErrorKind, ScanErrorRecord};
+pub use format::{format_bytes, format_percentage, render_ascii_bar, UnitSystem};
 pub use model::{DirNode, DirSummary, FileEntry, ScanReport};
 pub use platform::{extract_metadata, EntryKind, FileId, RawMetadata};
 
