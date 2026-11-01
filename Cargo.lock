@@ -25,6 +25,7 @@ dependencies = [
 name = "diskgoblin-core"
 version = "0.1.0"
 dependencies = [
+ "diskgoblin-core",
  "serde",
  "tempfile",
  "thiserror",

@@ -4,6 +4,8 @@ pub mod config;
 pub mod error;
 pub mod model;
 pub mod platform;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_fixtures;
 
 pub use config::{ScanOptions, SizeMetric};
 pub use error::{FatalScanError, ScanErrorKind, ScanErrorRecord};
