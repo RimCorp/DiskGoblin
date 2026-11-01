@@ -1,7 +1,40 @@
-//! Deterministic, dependency-free human-readable formatting helpers.
+//! Deterministic human-readable formatting helpers and the versioned JSON
+//! report serializer.
 //!
-//! All arithmetic is performed with integer types so that output is stable
-//! across platforms and no floating-point rounding surprises can occur.
+//! All human-readable arithmetic is performed with integer types so that output
+//! is stable across platforms and no floating-point rounding surprises can
+//! occur. JSON output preserves struct field order and uses `snake_case` names,
+//! making reports byte-for-byte deterministic for a given [`ScanReport`].
+
+use crate::model::ScanReport;
+
+/// Version of the machine-readable JSON report schema.
+///
+/// Bump this whenever the JSON shape changes in a backwards-incompatible way so
+/// that consumers (CLI scripts, benchmark harnesses, and the desktop app) can
+/// reject or migrate reports they do not understand.
+pub const REPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Serializes a scan report to pretty-printed, deterministic JSON.
+///
+/// Field names are `snake_case` and fields are emitted in declaration order.
+/// The returned string is valid UTF-8 and always ends without a trailing
+/// newline.
+pub fn report_to_json_pretty(report: &ScanReport) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(report)
+}
+
+/// Writes a scan report as compact, deterministic JSON to `writer`.
+///
+/// This is the streaming counterpart of [`report_to_json_pretty`] and is suited
+/// to writing directly to `stdout` without buffering the entire document in
+/// memory. The caller is responsible for flushing `writer`.
+pub fn report_to_json_writer<W: std::io::Write>(
+    report: &ScanReport,
+    writer: W,
+) -> Result<(), serde_json::Error> {
+    serde_json::to_writer(writer, report)
+}
 
 /// Unit system used by [`format_bytes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
