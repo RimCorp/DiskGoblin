@@ -1,6 +1,6 @@
 //! Streaming bottom-up rollups and bounded, deterministic top-N selection.
 use crate::{
-    scanner::{sequential, TraversalEvent},
+    scanner::{parallel, sequential, TraversalEvent},
     CancelToken, DirNode, DirSummary, EntryKind, FatalScanError, FileEntry, ProgressSink,
     ScanOptions, ScanProgress, ScanReport, ThrottledProgressSink,
 };
@@ -80,7 +80,7 @@ fn empty_node(path: PathBuf, depth: usize) -> DirNode {
     }
 }
 
-/// Aggregate the sequential scanner without retaining individual files beyond top-N.
+/// Aggregate the selected scanner without retaining individual files beyond top-N.
 ///
 /// Directory inode bytes are excluded; symlinks contribute their own inode sizes.
 /// Directory counts exclude the directory itself. Pruning affects only the result
@@ -100,7 +100,14 @@ pub(crate) fn scan(
     let progress_sink = ThrottledProgressSink::new(sink);
     let mut progress = ScanProgress::default();
     let mut entries_seen = 0usize;
-    sequential::scan_with_cancel(options, cancel, |event| {
+    // Auto mode can delegate to sequential traversal on a single-worker host.
+    let replay_progress = options.threads == 1
+        || (options.threads == 0
+            && std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                <= 1);
+    let visit = |event| {
         let transition = matches!(
             &event,
             TraversalEvent::DirectoryFinished(_)
@@ -208,11 +215,16 @@ pub(crate) fn scan(
                 }
             }
         }
-        if transition || entries_seen & 255 == 0 {
+        if replay_progress && (transition || entries_seen & 255 == 0) {
             progress.elapsed_ms = elapsed_ms(started);
             progress_sink.on_progress(progress);
         }
-    })?;
+    };
+    if options.threads == 1 {
+        sequential::scan_with_cancel(options, cancel, visit)?;
+    } else {
+        parallel::scan_with_progress(options, cancel, &progress_sink, visit)?;
+    }
     let report = ScanReport {
         schema_version: 1,
         root_path: options.root_path.clone(),
