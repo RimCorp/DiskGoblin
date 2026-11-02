@@ -1,0 +1,28 @@
+[package]
+name = "diskgoblin-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+default = []
+tauri-runtime = []
+
+[dependencies]
+diskgoblin-core = { path = "../../../crates/diskgoblin-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Native WebView shell crates (uncomment when bundling with `cargo tauri build`):
+# tauri = "2"
+# tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+diskgoblin-core = { path = "../../../crates/diskgoblin-core", features = ["test-utils"] }
+tempfile = "3"
+
+[[bin]]
+name = "diskgoblin-desktop"
+path = "src/main.rs"
+required-features = ["tauri-runtime"]

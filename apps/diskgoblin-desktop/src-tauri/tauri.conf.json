@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DiskGoblin",
+  "version": "0.1.0",
+  "identifier": "com.diskgoblin.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist",
+    "features": ["tauri-runtime"]
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "DiskGoblin", "width": 1000, "height": 700 }],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'",
+      "capabilities": [{ "identifier": "main", "windows": ["main"], "permissions": ["core:event:default"] }]
+    }
+  },
+  "bundle": { "active": false }
+}
