@@ -1,16 +1,17 @@
-//! Criterion benchmarks for the sequential directory scanner (`DG-011`).
+//! Criterion benchmarks for the directory scanner thread scaling (`DG-012`).
 //!
 //! Three synthetic topologies are materialized once per group (outside the
 //! timed closure) with [`FixtureBuilder`], then only [`scan_directory`] runs
 //! inside `b.iter`. Each group reports throughput in entries per second, where
 //! an entry is a file, directory, or symlink visited by traversal.
 //!
-//! These numbers are the `M1` sequential baseline that `DG-012` must beat by
-//! at least 1.5x (see `ADR-005`).
+//! Each group compares the sequential baseline against bounded pools with
+//! 2, 4, and 8 workers. The CLI default is gated on 1.5x across the suite
+//! (see `ADR-005`).
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use diskgoblin_core::{
     scan_directory,
@@ -68,14 +69,19 @@ fn wide_tree_fixture() -> TestFixture {
 
 fn bench_wide_tree(c: &mut Criterion) {
     let fixture = wide_tree_fixture();
-    let options = options_for(&fixture);
+    let mut options = options_for(&fixture);
     let total_entries = (WIDE_DIR_COUNT * (WIDE_FILES_PER_DIR + 1)) as u64;
 
     let mut group = c.benchmark_group("wide_tree");
     group.throughput(Throughput::Elements(total_entries));
-    group.bench_function("sequential", |b| {
-        b.iter(|| black_box(scan_directory(black_box(&options)).expect("wide_tree scan succeeds")))
-    });
+    for threads in [1, 2, 4, 8] {
+        options.threads = threads;
+        group.bench_function(BenchmarkId::new("threads", threads), |b| {
+            b.iter(|| {
+                black_box(scan_directory(black_box(&options)).expect("wide_tree scan succeeds"))
+            })
+        });
+    }
     group.finish();
 }
 
@@ -119,13 +125,18 @@ fn deep_tree_fixture() -> (TestFixture, u64) {
 
 fn bench_deep_tree(c: &mut Criterion) {
     let (fixture, total_entries) = deep_tree_fixture();
-    let options = options_for(&fixture);
+    let mut options = options_for(&fixture);
 
     let mut group = c.benchmark_group("deep_tree");
     group.throughput(Throughput::Elements(total_entries));
-    group.bench_function("sequential", |b| {
-        b.iter(|| black_box(scan_directory(black_box(&options)).expect("deep_tree scan succeeds")))
-    });
+    for threads in [1, 2, 4, 8] {
+        options.threads = threads;
+        group.bench_function(BenchmarkId::new("threads", threads), |b| {
+            b.iter(|| {
+                black_box(scan_directory(black_box(&options)).expect("deep_tree scan succeeds"))
+            })
+        });
+    }
     group.finish();
 }
 
@@ -156,18 +167,21 @@ fn hardlink_cache_tree_fixture() -> TestFixture {
 
 fn bench_hardlink_cache_tree(c: &mut Criterion) {
     let fixture = hardlink_cache_tree_fixture();
-    let options = options_for(&fixture);
+    let mut options = options_for(&fixture);
     let total_entries = (HARDLINK_BASE_FILES + HARDLINK_LINK_FILES) as u64;
 
     let mut group = c.benchmark_group("hardlink_cache_tree");
     group.throughput(Throughput::Elements(total_entries));
-    group.bench_function("sequential", |b| {
-        b.iter(|| {
-            black_box(
-                scan_directory(black_box(&options)).expect("hardlink_cache_tree scan succeeds"),
-            )
-        })
-    });
+    for threads in [1, 2, 4, 8] {
+        options.threads = threads;
+        group.bench_function(BenchmarkId::new("threads", threads), |b| {
+            b.iter(|| {
+                black_box(
+                    scan_directory(black_box(&options)).expect("hardlink_cache_tree scan succeeds"),
+                )
+            })
+        });
+    }
     group.finish();
 }
 

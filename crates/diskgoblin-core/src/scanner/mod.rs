@@ -1,5 +1,6 @@
 //! Raw traversal events for downstream aggregation, without retaining every file.
 
+pub mod parallel;
 pub mod sequential;
 
 use crate::{RawMetadata, ScanErrorRecord};

@@ -321,6 +321,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "diskgoblin-core",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
