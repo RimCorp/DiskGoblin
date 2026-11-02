@@ -8,6 +8,10 @@ license.workspace = true
 name = "diskgoblin"
 path = "src/main.rs"
 
+[[bin]]
+name = "factory_eval"
+path = "src/bin/factory_eval.rs"
+
 [dependencies]
 diskgoblin-core.workspace = true
 clap = { version = "4", features = ["derive"] }
