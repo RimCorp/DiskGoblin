@@ -4,6 +4,7 @@ pub mod aggregator;
 pub mod cancel;
 pub mod config;
 pub mod error;
+pub mod factory_metrics;
 pub mod format;
 pub mod model;
 pub mod platform;
@@ -17,6 +18,12 @@ pub use cancel::{
 };
 pub use config::{ScanOptions, SizeMetric};
 pub use error::{FatalScanError, ScanErrorKind, ScanErrorRecord};
+pub use factory_metrics::{
+    load_run_records_from_dir, render_experiment_summary_markdown, summarize_by_configuration,
+    validate_run_record, AgentRunRecord, ExecutionMetrics, HarnessInfo, HumanInterventions,
+    ModelConfigSummary, ModelInfo, QualityReviewMetrics, RunOutcome, TimingMetrics, UsageMetrics,
+    AGENT_RUN_SCHEMA_VERSION,
+};
 pub use format::{
     format_bytes, format_percentage, render_ascii_bar, report_to_json_pretty,
     report_to_json_writer, UnitSystem, REPORT_SCHEMA_VERSION,
