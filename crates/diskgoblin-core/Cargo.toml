@@ -22,6 +22,9 @@ thiserror = "2"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 diskgoblin-core = { path = ".", features = ["test-utils"] }
+# Pinned to 1.11.x in Cargo.lock: proptest 1.12 declares `rust-version = 1.88`,
+# above the 1.85 toolchain used locally. 1.11 supports 1.85 and newer.
+proptest = "1"
 tempfile = "3"
 
 [[bench]]
