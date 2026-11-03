@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "run_id": "2026-11-01T14-14-44Z_DG-006_codex_gpt-6.1-sol",
+  "issue_id": "DG-006",
+  "milestone": "M1",
+  "starting_commit_sha": "232c62dfa1332fd3e89f6ac2899e5f8f1b78f188",
+  "final_commit_sha": "cb48a03747ef8189167cc3bb9b385f9922ba2cb5",
+  "agents_md_sha256": "c591aa5be7ae92fd48ada4b9c3cdcb947987c26d619787928539d4948b52d168",
+  "issue_spec_sha256": "f88dc51997e40d1e86b4be8688e32dc9ee0b3dafa5e63872b496340bd4713fde",
+  "harness": {
+    "name": "codex",
+    "version": "0.166.0",
+    "sandbox_mode": "workspace-write"
+  },
+  "model": {
+    "provider": "openai",
+    "model_id": "gpt-6.1-sol",
+    "billing_mode": "subscription_included"
+  },
+  "timing": {
+    "started_at": "2026-11-01T14:14:44Z",
+    "completed_at": "2026-11-01T14:16:32Z",
+    "wall_clock_seconds": 108,
+    "rate_limit_pause_seconds": 0,
+    "active_execution_seconds": 108
+  },
+  "usage": {
+    "input_tokens": 350354,
+    "cached_input_tokens": 318720,
+    "output_tokens": 4652,
+    "reasoning_tokens": 96,
+    "measured_api_cost_usd": 0.00,
+    "imputed_list_cost_usd": 0.00,
+    "rate_limit_events": 0
+  },
+  "execution_metrics": {
+    "tool_calls_total": 9,
+    "tool_call_retries": 0,
+    "compile_or_test_failures": 0,
+    "repair_attempts": 0
+  },
+  "quality_and_review": {
+    "cargo_fmt_passed": true,
+    "cargo_clippy_passed": true,
+    "cargo_test_passed": true,
+    "scope_check_passed": true,
+    "reviewer_agent_verdict": "APPROVE",
+    "reviewer_blocking_findings": 0,
+    "reviewer_non_blocking_findings": 0
+  },
+  "human_interventions": {
+    "count": 0,
+    "total_human_minutes": 0.0,
+    "categories": []
+  },
+  "outcome": {
+    "status": "accepted_first_pr",
+    "pr_number": 25
+  }
+}

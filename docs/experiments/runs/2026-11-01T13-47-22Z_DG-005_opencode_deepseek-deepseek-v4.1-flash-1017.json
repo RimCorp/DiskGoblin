@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "run_id": "2026-11-01T13-47-22Z_DG-005_opencode_deepseek-deepseek-v4.1-flash-1017",
+  "issue_id": "DG-005",
+  "milestone": "M1",
+  "starting_commit_sha": "a32c94d26f9c927786791c11f67e4ee7d93efb07",
+  "final_commit_sha": "55ec088c32ca255e36ea5982b0b814cb5de9644d",
+  "agents_md_sha256": "c591aa5be7ae92fd48ada4b9c3cdcb947987c26d619787928539d4948b52d168",
+  "issue_spec_sha256": "f9cdbcd7faa4737a553220c8710c3f470c87e3a8ca530529ba653080677a558e",
+  "harness": {
+    "name": "opencode",
+    "version": "2.2.5",
+    "sandbox_mode": "workspace-write"
+  },
+  "model": {
+    "provider": "openrouter",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "billing_mode": "api_metered"
+  },
+  "timing": {
+    "started_at": "2026-11-01T13:47:22Z",
+    "completed_at": "2026-11-01T13:49:58Z",
+    "wall_clock_seconds": 156,
+    "rate_limit_pause_seconds": 0,
+    "active_execution_seconds": 156
+  },
+  "usage": {
+    "input_tokens": 78298,
+    "cached_input_tokens": 1356544,
+    "output_tokens": 10141,
+    "reasoning_tokens": 23926,
+    "measured_api_cost_usd": 0.044026,
+    "imputed_list_cost_usd": 0.044026,
+    "rate_limit_events": 0
+  },
+  "execution_metrics": {
+    "tool_calls_total": 50,
+    "tool_call_retries": 0,
+    "compile_or_test_failures": 1,
+    "repair_attempts": 0
+  },
+  "quality_and_review": {
+    "cargo_fmt_passed": true,
+    "cargo_clippy_passed": true,
+    "cargo_test_passed": true,
+    "scope_check_passed": true,
+    "reviewer_agent_verdict": "APPROVE",
+    "reviewer_blocking_findings": 0,
+    "reviewer_non_blocking_findings": 0
+  },
+  "human_interventions": {
+    "count": 0,
+    "total_human_minutes": 0.0,
+    "categories": []
+  },
+  "outcome": {
+    "status": "accepted_first_pr",
+    "pr_number": null
+  }
+}

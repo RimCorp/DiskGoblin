@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "run_id": "2026-11-01T13-25-58Z_DG-004_opencode_z-ai-glm-5.3-flash",
+  "issue_id": "DG-004",
+  "milestone": "M1",
+  "starting_commit_sha": "6acb159dfe441bcad541b7dc45e2b85b9d937cca",
+  "final_commit_sha": "6f680b9ccca17c8380107ace70461668b0703c16",
+  "agents_md_sha256": "c591aa5be7ae92fd48ada4b9c3cdcb947987c26d619787928539d4948b52d168",
+  "issue_spec_sha256": "962bdffac2a0df385de0ff8d056597eeb9a7287e406b855087b7518aa033855e",
+  "harness": {
+    "name": "opencode",
+    "version": "2.2.5",
+    "sandbox_mode": "workspace-write"
+  },
+  "model": {
+    "provider": "openrouter",
+    "model_id": "z-ai/glm-5.3-flash",
+    "billing_mode": "api_metered"
+  },
+  "timing": {
+    "started_at": "2026-11-01T13:25:58Z",
+    "completed_at": "2026-11-01T13:29:12Z",
+    "wall_clock_seconds": 194,
+    "rate_limit_pause_seconds": 0,
+    "active_execution_seconds": 194
+  },
+  "usage": {
+    "input_tokens": 62989,
+    "cached_input_tokens": 668800,
+    "output_tokens": 5745,
+    "reasoning_tokens": 20883,
+    "measured_api_cost_usd": 0.035611,
+    "imputed_list_cost_usd": 0.035611,
+    "rate_limit_events": 0
+  },
+  "execution_metrics": {
+    "tool_calls_total": 26,
+    "tool_call_retries": 0,
+    "compile_or_test_failures": 2,
+    "repair_attempts": 1
+  },
+  "quality_and_review": {
+    "cargo_fmt_passed": true,
+    "cargo_clippy_passed": true,
+    "cargo_test_passed": true,
+    "scope_check_passed": true,
+    "reviewer_agent_verdict": "APPROVE",
+    "reviewer_blocking_findings": 0,
+    "reviewer_non_blocking_findings": 0
+  },
+  "human_interventions": {
+    "count": 0,
+    "total_human_minutes": 0.0,
+    "categories": []
+  },
+  "outcome": {
+    "status": "accepted_after_repair",
+    "pr_number": null
+  }
+}
