@@ -9,6 +9,7 @@ import TreemapView from "./components/TreemapView";
 import {
   MOCK_SCAN_ROOT,
   cancelScan,
+  fetchUiBootstrapConfig,
   isTauriRuntime,
   pickDirectory,
   startScan,
@@ -65,6 +66,36 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetchUiBootstrapConfig().then(async (config) => {
+      if (disposed || !config) return;
+      setPath(config.root_path);
+      setMetric(config.size_metric);
+      if (config.auto_scan === false || config.root_path.trim().length === 0) return;
+      setScanning(true);
+      setNotice(null);
+      setProgress(null);
+      try {
+        const result = await startScan({
+          root_path: config.root_path,
+          size_metric: config.size_metric,
+          one_file_system: config.one_file_system ?? false,
+          max_depth: config.max_depth ?? null,
+          top_n: config.top_n ?? DEFAULT_TOP_N,
+          min_size_bytes: config.min_size_bytes ?? 0,
+          threads: config.threads ?? DEFAULT_THREADS,
+        });
+        if (!disposed) { setReport(result); setZoomChain([]); }
+      } catch (error) {
+        if (!disposed) setNotice(errorMessage(error));
+      } finally {
+        if (!disposed) setScanning(false);
+      }
+    });
+    return () => { disposed = true; };
   }, []);
 
   const ancestors = zoomChain.length > 0 ? zoomChain : report ? [report.root] : [];

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "ui": "npm run build && cargo run --manifest-path ../../Cargo.toml -p diskgoblin-cli --bin diskgoblin -- --ui"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

@@ -33,10 +33,41 @@ const MOCK_PROGRESS_FRACTIONS = [0.25, 0.6, 1] as const;
 
 /**
  * True inside a live Tauri webview. Vitest (node) and the plain browser preview
- * both return false, which routes every call to the deterministic mock.
+ * both return false; browser sessions can use the localhost HTTP bridge.
  */
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export interface UiBootstrapConfig {
+  root_path: string;
+  size_metric: SizeMetric;
+  one_file_system?: boolean;
+  max_depth?: number | null;
+  top_n?: number;
+  min_size_bytes?: number;
+  threads?: number;
+  auto_scan?: boolean;
+}
+
+let httpBridgeEnabled = false;
+export function setHttpBridgeEnabled(enabled: boolean): void {
+  httpBridgeEnabled = enabled;
+}
+export function isHttpBridgeEnabled(): boolean {
+  return httpBridgeEnabled;
+}
+export async function fetchUiBootstrapConfig(fetchImpl: typeof fetch = globalThis.fetch): Promise<UiBootstrapConfig | null> {
+  if (isTauriRuntime() || (typeof window === "undefined" && !isHttpBridgeEnabled())) return null;
+  try {
+    const response = await fetchImpl("/api/config");
+    if (!response.ok) return null;
+    const config = await response.json() as UiBootstrapConfig;
+    setHttpBridgeEnabled(true);
+    return config;
+  } catch {
+    return null;
+  }
 }
 
 /** Drops trailing separators (except for a bare `/`) so paths join cleanly. */
@@ -261,12 +292,48 @@ function emitMockProgress(progress: ScanProgress): void {
 }
 
 /**
- * Starts a scan. Inside Tauri this invokes the `start_scan` command; everywhere
- * else it plays back the deterministic fixture above.
+ * Starts a scan through Tauri, the localhost HTTP bridge, or the preview fixture.
  */
-export async function startScan(options: ScanOptionsDto): Promise<ScanReport> {
+export async function startScan(options: ScanOptionsDto, fetchImpl: typeof fetch = globalThis.fetch): Promise<ScanReport> {
   if (isTauriRuntime()) {
     return invoke<ScanReport>("start_scan", { options });
+  }
+
+  if (isHttpBridgeEnabled() || (typeof window !== "undefined" && options.root_path !== MOCK_SCAN_ROOT)) {
+    let polling: Promise<void> | null = null;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetchImpl("/api/progress");
+        if (response.ok) {
+          const progress = await response.json() as ScanProgress | null;
+          if (progress && active) emitMockProgress(progress);
+        }
+      } catch {
+        // Transient progress failures must not discard the scan result.
+      }
+    };
+    const timer = setInterval(() => {
+      if (!polling) polling = poll().finally(() => { polling = null; });
+    }, 100);
+    try {
+      const response = await fetchImpl("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "scan failed");
+      clearInterval(timer);
+      await polling;
+      await poll();
+      return body as ScanReport;
+    } catch (error) {
+      if (!(error instanceof TypeError && !isHttpBridgeEnabled() && options.root_path === MOCK_SCAN_ROOT)) throw error;
+    } finally {
+      active = false;
+      clearInterval(timer);
+    }
   }
 
   const generation = ++mockGeneration;
@@ -284,10 +351,13 @@ export async function startScan(options: ScanOptionsDto): Promise<ScanReport> {
 }
 
 /** Cancels the in-flight scan, if any. */
-export async function cancelScan(): Promise<void> {
+export async function cancelScan(fetchImpl: typeof fetch = globalThis.fetch): Promise<void> {
   if (isTauriRuntime()) {
     await invoke<void>("cancel_scan");
     return;
+  }
+  if (isHttpBridgeEnabled()) {
+    await fetchImpl("/api/cancel", { method: "POST" });
   }
   cancelledGeneration = mockGeneration;
 }
@@ -296,9 +366,15 @@ export async function cancelScan(): Promise<void> {
  * Opens the native folder picker. Outside Tauri the mock returns the synthetic
  * scan root so the browser preview stays usable.
  */
-export async function pickDirectory(): Promise<string | null> {
+export async function pickDirectory(fetchImpl: typeof fetch = globalThis.fetch): Promise<string | null> {
   if (isTauriRuntime()) {
     return invoke<string | null>("pick_directory");
+  }
+  if (isHttpBridgeEnabled()) {
+    const response = await fetchImpl("/api/pick-directory", { method: "POST" });
+    if (!response.ok) throw new Error("directory picker failed");
+    const body = await response.json() as { path?: string | null };
+    return body.path ?? null;
   }
   return MOCK_SCAN_ROOT;
 }
@@ -327,6 +403,7 @@ export async function subscribeScanProgress(
 
 /** Clears mock scan state between tests. Never touches a live Tauri backend. */
 export function resetMockScanState(): void {
+  setHttpBridgeEnabled(false);
   mockListeners.clear();
   mockGeneration = 0;
   cancelledGeneration = -1;

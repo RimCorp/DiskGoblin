@@ -5,6 +5,15 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(name = "diskgoblin", version, about = "Read-only disk space analyzer")]
 pub struct Args {
+    /// Launch the interactive visual web UI backed by a local HTTP bridge
+    #[arg(long)]
+    pub ui: bool,
+    /// Local UI server port (0 = automatic OS-assigned port)
+    #[arg(long, default_value_t = 7878, value_name = "PORT")]
+    pub ui_port: u16,
+    /// Do not automatically open the browser
+    #[arg(long)]
+    pub no_open: bool,
     /// Root directory or file to scan
     #[arg(default_value = ".")]
     pub path: PathBuf,
@@ -71,6 +80,8 @@ mod tests {
                 ..ScanOptions::default()
             }
         );
+        assert!(!args.ui && !args.no_open);
+        assert_eq!(args.ui_port, 7878);
         assert!(!args.si && !args.json && !args.show_errors && !args.quiet);
     }
     #[test]
@@ -124,6 +135,22 @@ mod tests {
                 2
             );
         }
+    }
+    #[test]
+    fn ui_flags() {
+        let args = Args::try_parse_from([
+            "diskgoblin",
+            "--ui",
+            "--ui-port",
+            "0",
+            "--no-open",
+            "fixture",
+        ])
+        .unwrap();
+        assert!(args.ui && args.no_open);
+        assert_eq!(args.ui_port, 0);
+        assert_eq!(args.path, PathBuf::from("fixture"));
+        assert!(Args::try_parse_from(["diskgoblin", "--ui-port", "65536"]).is_err());
     }
     #[test]
     fn help_and_version() {

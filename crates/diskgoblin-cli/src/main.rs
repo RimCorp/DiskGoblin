@@ -1,6 +1,7 @@
 mod args;
 mod progress;
 mod render;
+mod ui_server;
 
 use anyhow::Context;
 use clap::Parser;
@@ -15,6 +16,9 @@ fn run(args: args::Args) -> anyhow::Result<()> {
     let signal_cancel = cancel.clone();
     ctrlc::set_handler(move || signal_cancel.cancel())
         .context("failed to install SIGINT handler")?;
+    if args.ui {
+        return ui_server::run_ui_server(&args, cancel);
+    }
     let units = if args.si {
         UnitSystem::SiDecimal
     } else {

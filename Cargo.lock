@@ -326,6 +326,7 @@ dependencies = [
  "ctrlc",
  "diskgoblin-core",
  "predicates",
+ "serde",
  "serde_json",
  "tempfile",
 ]

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../../App";
 import ErrorDrawer, { describeErrorKind } from "../ErrorDrawer";
@@ -18,6 +18,9 @@ import {
   createMockScanReport,
   flattenDirNodes,
   isTauriRuntime,
+  fetchUiBootstrapConfig,
+  setHttpBridgeEnabled,
+  isHttpBridgeEnabled,
   pickDirectory,
   resetMockScanState,
   startScan,
@@ -490,5 +493,87 @@ describe("<App /> wiring", () => {
     expect(html).not.toContain('aria-label="Directory breadcrumb"');
     expect(html).not.toContain('aria-label="Scan errors"');
     expect(html).not.toContain('data-testid="scan-progress"');
+  });
+});
+
+
+describe("HTTP bridge adapter", () => {
+  it("probes config only when enabled in node and resets bridge state", async () => {
+    const config = { ...options({ root_path: "/fixture" }), auto_scan: true };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(config)));
+    expect(await fetchUiBootstrapConfig(fetchImpl)).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    setHttpBridgeEnabled(true);
+    expect(await fetchUiBootstrapConfig(fetchImpl)).toEqual(config);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/config");
+    expect(isHttpBridgeEnabled()).toBe(true);
+    resetMockScanState();
+    expect(isHttpBridgeEnabled()).toBe(false);
+  });
+
+  it("returns null on a failed bootstrap probe", async () => {
+    setHttpBridgeEnabled(true);
+    expect(await fetchUiBootstrapConfig(vi.fn<typeof fetch>().mockResolvedValue(new Response("", { status: 404 })))).toBeNull();
+    expect(await fetchUiBootstrapConfig(vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")))).toBeNull();
+  });
+
+  it("posts real options and delivers the final progress snapshot", async () => {
+    setHttpBridgeEnabled(true);
+    const scanOptions = options({ root_path: "/fixture" });
+    const report = createMockScanReport(scanOptions);
+    const progress = createMockProgressSequence(report)[2];
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (url) =>
+      new Response(JSON.stringify(url === "/api/progress" ? progress : report)));
+    const seen: ScanProgress[] = [];
+    const stop = await subscribeScanProgress(p => seen.push(p));
+    expect(await startScan(scanOptions, fetchImpl)).toEqual(report);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/scan", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scanOptions),
+    });
+    expect(seen).toEqual([progress]);
+    stop();
+  });
+
+  it("polls while a scan is pending and stops after it resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      setHttpBridgeEnabled(true);
+      const report = createMockScanReport();
+      const progress = createMockProgressSequence(report)[0];
+      let finish!: (response: Response) => void;
+      const pendingResponse = new Promise<Response>(resolve => { finish = resolve; });
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async url =>
+        url === "/api/scan" ? pendingResponse : new Response(JSON.stringify(progress)));
+      const seen: ScanProgress[] = [];
+      await subscribeScanProgress(p => seen.push(p));
+      const pending = startScan(options(), fetchImpl);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(seen.length).toBeGreaterThan(0);
+      finish(new Response(JSON.stringify(report)));
+      await pending;
+      const calls = fetchImpl.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(fetchImpl).toHaveBeenCalledTimes(calls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards cancellation and folder picking through HTTP", async () => {
+    setHttpBridgeEnabled(true);
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async url =>
+      new Response(JSON.stringify(url === "/api/cancel" ? { cancelled: true } : { path: "/selected" })));
+    await cancelScan(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/cancel", { method: "POST" });
+    expect(await pickDirectory(fetchImpl)).toBe("/selected");
+    expect(fetchImpl).toHaveBeenCalledWith("/api/pick-directory", { method: "POST" });
+    expect(await pickDirectory(vi.fn<typeof fetch>().mockResolvedValue(new Response('{"path":null}')))).toBeNull();
+  });
+
+  it("surfaces scan errors without substituting mock data", async () => {
+    setHttpBridgeEnabled(true);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: CANCEL_MESSAGE }), { status: 400 }));
+    await expect(startScan(options(), fetchImpl)).rejects.toThrow(CANCEL_MESSAGE);
+    await expect(startScan(options(), vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")))).rejects.toThrow("offline");
   });
 });
