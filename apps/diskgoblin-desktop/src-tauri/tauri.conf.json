@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist",
     "features": ["tauri-runtime"]
   },
@@ -14,7 +14,7 @@
     "windows": [{ "label": "main", "title": "DiskGoblin", "width": 1000, "height": 700 }],
     "security": {
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'",
-      "capabilities": [{ "identifier": "main", "windows": ["main"], "permissions": ["core:event:default"] }]
+      "capabilities": [{ "identifier": "main", "windows": ["main"], "permissions": ["core:event:default", "dialog:default"] }]
     }
   },
   "bundle": { "active": false }

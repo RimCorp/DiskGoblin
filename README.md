@@ -2,7 +2,7 @@
 
 > **See what’s gobblin’ your disk space — from the terminal to the treemap.**
 
-**DiskGoblin** is a read-only, symlink-safe, hard-link deduplicated disk space analyzer written in Rust, with a high-performance CLI and an interactive desktop application built with **Tauri 2, React, and D3**. A shared engine tracks physical allocation and logical apparent size, supports deterministic parallel traversal, and delivers terminal tables, versioned JSON reports, and desktop treemaps. Built-in factory telemetry evaluates the autonomous development workflow alongside the application itself. The desktop browser preview is available today; native shell integration remains incomplete as described below.
+**DiskGoblin** is a read-only, symlink-safe, hard-link deduplicated disk space analyzer written in Rust, with a high-performance CLI and an interactive desktop application built with **Tauri 2, React, and D3**. A shared engine tracks physical allocation and logical apparent size, supports deterministic parallel traversal, and delivers terminal tables, versioned JSON reports, and desktop treemaps. Built-in factory telemetry evaluates the autonomous development workflow alongside the application itself. The CLI can serve the same frontend over a localhost HTTP bridge; native shell integration remains gated as described below.
 
 ---
 
@@ -33,13 +33,23 @@ On non-Unix platforms, allocated size falls back to apparent size and inode-base
 - **Live progress banner and Cancel:** Tracks scan counts, bytes, elapsed time, and errors through the shared engine's progress interface.
 - **Top directories and files tables:** Ranked results complement the treemap, with a **partial scan error drawer** for inaccessible paths and reasons.
 
-The browser preview uses deterministic mock IPC. The Rust backend and Tauri command wiring are present, but the native WebView shell still requires integration; see the quick start below.
+The frontend selects native Tauri IPC, the localhost HTTP bridge, or deterministic mock IPC for a standalone preview. The Rust backend and Tauri command wiring are present, but the native WebView shell still requires integration; see the quick start below.
 
 ### Autonomous Software Factory Evaluation
 
 The built-in **`factory_eval`** tool validates run telemetry and generates comparative Markdown tables for harness/model configurations, timing, usage, cost, and outcomes. The checked-in dataset contains **22 run records**; the published [comparative findings](docs/experiments/findings.md) analyze the original **20-run cohort**, with limitations and recommendations for interpreting the evidence.
 
 ---
+
+## Three Execution Modes
+
+1. **Terminal CLI:** `diskgoblin [PATH]` prints disk usage tables; add `--json` for a machine-readable report.
+2. **Visual Web UI:** `diskgoblin --ui [PATH]` serves the frontend on localhost and opens your browser. It automatically scans the supplied path using the CLI metric and scan settings. Use `--ui-port 0` for an automatic port or `--no-open` to open the printed URL yourself. Port 7878 is the default, with automatic fallback when occupied. Stop the server with Ctrl-C.
+3. **Native Desktop App:** `cd apps/diskgoblin-desktop && npm run tauri dev` is the native entry point, subject to the existing runtime dependency gate described below.
+
+Build the visual frontend first with `cd apps/diskgoblin-desktop && npm install && npm run build`, then launch `diskgoblin --ui /path/to/scan`. Alternatively, run `npm run ui` from `apps/diskgoblin-desktop` to build and launch together (or `npm run ui -- /path/to/scan` to scan a specific target directory). Set `DISK_GOBLIN_UI_DIST` to serve a custom frontend build. Without built assets, the server provides a built-in scan page.
+
+During frontend development, `npm run dev` proxies `/api` to a separately running `diskgoblin --ui --no-open` on port 7878. A standalone `npm run preview` keeps the synthetic demo usable at `/mock/home`; real scans require the bridge or Tauri runtime.
 
 ## Desktop App Quick Start
 
@@ -107,6 +117,9 @@ Usage: diskgoblin [OPTIONS] [PATH]
 
 | Flag | Description | Default |
 | :--- | :--- | :--- |
+| `--ui` | Launch the visual web UI on localhost | Off |
+| `--ui-port <PORT>` | UI server port; `0` selects an automatic port | `7878` |
+| `--no-open` | Skip opening the browser in UI mode | Off |
 | `--apparent-size` | Rank and display logical size instead of physical allocation | Allocated |
 | `-x`, `--one-file-system` | Do not recurse across filesystem device boundaries | Off |
 | `-d`, `--max-depth <DEPTH>` | Maximum directory depth included in reports; deeper contents still contribute to totals | `3` |
