@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ComponentProps } from "react";
+import { isValidElement } from "react";
+import type { ComponentProps, ReactNode, ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../../App";
@@ -11,6 +12,7 @@ import TopItemsPanel, {
   resolveDirectoryNode,
 } from "../TopItemsPanel";
 import {
+  revealPath, getLastRevealedPath,
   CANCEL_MESSAGE,
   MOCK_SCAN_ROOT,
   cancelScan,
@@ -29,10 +31,8 @@ import {
 import { formatBytes } from "../../lib/treemapLayout";
 import type {
   DirNode,
-  DirSummary,
   ScanOptionsDto,
   ScanProgress,
-  ScanReport,
   SizeMetric,
 } from "../../types/scan";
 
@@ -88,17 +88,13 @@ function panelProps(overrides: Partial<ComponentProps<typeof TopItemsPanel>> = {
     metric: "allocated" as SizeMetric,
     tab: "directories" as const,
     onTabChange: () => {},
-    onSelectDirectory: () => {},
+    onSelectItem: () => {},
     ...overrides,
   };
 }
 
 function nodeAt(root: DirNode, path: string): DirNode | undefined {
   return flattenDirNodes(root).find((node) => node.summary.path === path);
-}
-
-function cloneSummary(summary: DirSummary): DirSummary {
-  return { ...summary };
 }
 
 beforeEach(() => {
@@ -183,12 +179,12 @@ describe("<TopItemsPanel />", () => {
     const report = createMockScanReport({ size_metric: "allocated" });
     const html = render(<TopItemsPanel {...panelProps({ report })} />);
 
-    expect(html).toMatch(/<button[^>]*aria-selected="true"[^>]*>Top Directories<\/button>/);
-    expect(html).toMatch(/<button[^>]*aria-selected="false"[^>]*>Top Files<\/button>/);
+    expect(html).toMatch(/<button[^>]*aria-selected="true"[^>]*>Folders<\/button>/);
+    expect(html).toMatch(/<button[^>]*aria-selected="false"[^>]*>Files<\/button>/);
 
-    expect(countOf(html, "top-directory-row")).toBe(report.top_directories.length);
+    expect(countOf(html, "top-directory-row")).toBe(report.root.children.length);
     expect(countOf(html, "top-file-row")).toBe(0);
-    expect(countOf(html, "size-bar")).toBe(report.top_directories.length);
+    expect(countOf(html, "size-bar")).toBe(report.root.children.length);
 
     const videos = report.top_directories[0];
     expect(videos.path).toBe(`${MOCK_SCAN_ROOT}/Videos`);
@@ -197,7 +193,7 @@ describe("<TopItemsPanel />", () => {
     expect(html).toContain(videos.path);
 
     const videosPercentage = relativePercent(videos.allocated_size, report.root.summary.allocated_size);
-    expect(relativePercent(videos.allocated_size, report.root.summary.allocated_size)).toBeCloseTo(58.67, 2);
+    expect(relativePercent(videos.allocated_size, report.root.summary.allocated_size)).toBeCloseTo(58.81, 2);
     expect(html).toContain(formatPercent(videosPercentage));
     expect(html).toContain(`data-percent="${videosPercentage.toFixed(1)}"`);
   });
@@ -206,14 +202,14 @@ describe("<TopItemsPanel />", () => {
     const report = createMockScanReport();
     const html = render(<TopItemsPanel {...panelProps({ report, tab: "files" })} />);
 
-    expect(html).toMatch(/<button[^>]*aria-selected="true"[^>]*>Top Files<\/button>/);
-    expect(countOf(html, "top-file-row")).toBe(report.top_files.length);
+    expect(html).toMatch(/<button[^>]*aria-selected="true"[^>]*>Files<\/button>/);
+    expect(countOf(html, "top-file-row")).toBe(1);
     expect(countOf(html, "top-directory-row")).toBe(0);
 
-    const largest = report.top_files[0];
-    expect(largest.path).toBe(`${MOCK_SCAN_ROOT}/Videos/trip.mov`);
+    const largest = report.top_files.find(file => file.path === `${MOCK_SCAN_ROOT}/notes.txt`)!;
+    expect(largest.path).toBe(`${MOCK_SCAN_ROOT}/notes.txt`);
     expect(html).toContain(formatBytes(largest.allocated_size));
-    expect(html).toContain("3.1 GiB");
+    expect(html).toContain("16 MiB");
     expect(html).toContain(largest.path);
 
     const share = relativePercent(largest.allocated_size, report.root.summary.allocated_size);
@@ -257,25 +253,14 @@ describe("<TopItemsPanel />", () => {
     }
   });
 
-  it("marks directories missing from the tree as non-clickable rows", () => {
+  it("scopes both tabs to the viewed folder and synchronizes selection", () => {
     const report = createMockScanReport();
-    const ghost: DirSummary = {
-      ...cloneSummary(report.top_directories[0]),
-      path: "/somewhere/outside",
-    };
-    const withGhost: ScanReport = {
-      ...report,
-      top_directories: [...report.top_directories, ghost],
-    };
-
-    const html = render(<TopItemsPanel {...panelProps({ report: withGhost })} />);
-    expect(countOf(html, "top-directory-row")).toBe(withGhost.top_directories.length);
-    expect(resolveDirectoryNode(withGhost.root, ghost.path)).toBeNull();
-
-    const ghostRow = html.match(/<tr[^>]*data-path="\/somewhere\/outside"[^>]*>[\s\S]*?<\/tr>/);
-    expect(ghostRow).not.toBeNull();
-    expect(ghostRow ? ghostRow[0] : "").toContain('data-present="false"');
-    expect(ghostRow ? ghostRow[0] : "").toContain("disabled");
+    const viewedFolder = report.root.children[0];
+    const html = render(<TopItemsPanel {...panelProps({ report, viewedFolder, tab: "files", selectedId: `${MOCK_SCAN_ROOT}/Videos/trip.mov` })} />);
+    expect(countOf(html, "top-file-row")).toBe(2);
+    expect(html).toContain('data-selected="true"');
+    expect(html).not.toContain("notes.txt");
+    expect(html).toContain('data-percent="68.7"');
   });
 
   it("renders an empty state before a report exists", () => {
@@ -363,7 +348,7 @@ describe("ipc adapter", () => {
     // Nested directories, top directories, top files and at least one error.
     expect(report.root.children.length).toBeGreaterThan(0);
     expect(nodeAt(report.root, `${MOCK_SCAN_ROOT}/Photos/2024`)).toBeDefined();
-    expect(report.top_directories.length).toBeGreaterThanOrEqual(4);
+    expect(report.root.children.length).toBeGreaterThanOrEqual(4);
     expect(report.top_files.length).toBeGreaterThanOrEqual(4);
     expect(report.errors.length).toBeGreaterThan(0);
     for (const error of report.errors) {
@@ -381,7 +366,7 @@ describe("ipc adapter", () => {
     expect(createMockScanReport().top_directories.length).toBe(report.top_directories.length);
   });
 
-  it("keeps parent sizes equal to the sum of their children", () => {
+  it("reconciles parent sizes with child folders and direct file bytes", () => {
     const report = createMockScanReport();
     const check = (node: DirNode) => {
       if (node.children.length === 0) {
@@ -389,7 +374,8 @@ describe("ipc adapter", () => {
       }
       for (const key of ["apparent_size", "allocated_size"] as const) {
         const sum = node.children.reduce((total, child) => total + child.summary[key], 0);
-        expect(sum).toBe(node.summary[key]);
+        const direct = report.top_files.filter(file => file.path.slice(0, file.path.lastIndexOf("/")) === node.summary.path).reduce((total, file) => total + file[key], 0);
+        expect(sum + direct).toBe(node.summary[key]);
       }
       node.children.forEach(check);
     };
@@ -575,5 +561,53 @@ describe("HTTP bridge adapter", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: CANCEL_MESSAGE }), { status: 400 }));
     await expect(startScan(options(), fetchImpl)).rejects.toThrow(CANCEL_MESSAGE);
     await expect(startScan(options(), vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")))).rejects.toThrow("offline");
+  });
+});
+
+describe("reveal adapter", () => {
+  it("validates paths and records and resets preview selection", async () => {
+    await expect(revealPath(" ")).rejects.toThrow("path is required");
+    await revealPath("/mock/home/notes.txt");
+    expect(getLastRevealedPath()).toBe("/mock/home/notes.txt");
+    resetMockScanState();
+    expect(getLastRevealedPath()).toBeNull();
+  });
+  it("posts the selected path and surfaces HTTP reveal failures", async () => {
+    setHttpBridgeEnabled(true);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"revealed":true}'));
+    await revealPath("/fixture/file", fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"path":"/fixture/file"}' });
+    await expect(revealPath("/missing", vi.fn<typeof fetch>().mockResolvedValue(new Response('{"error":"path does not exist or is inaccessible"}', { status: 400 })))).rejects.toThrow("path does not exist or is inaccessible");
+  });
+});
+
+function findElement(node: ReactNode, testId: string): ReactElement | undefined {
+  if (Array.isArray(node)) return node.map(child => findElement(child, testId)).find(Boolean);
+  if (!isValidElement(node)) return undefined;
+  if (node.props["data-testid"] === testId) return node;
+  return findElement(node.props.children, testId);
+}
+describe("Largest items input actions", () => {
+  it("selects without navigating on click, and opens on double click or Enter", () => {
+    const onSelectItem = vi.fn(), onOpenDirectory = vi.fn();
+    const report = createMockScanReport();
+    const tree = TopItemsPanel({ ...panelProps({ report }), onSelectItem, onOpenDirectory });
+    const row = findElement(tree, "top-directory-row")!;
+    row.props.onClick();
+    expect(onSelectItem).toHaveBeenCalledWith(expect.objectContaining({ path: report.root.children[0].summary.path }));
+    expect(onOpenDirectory).not.toHaveBeenCalled();
+    row.props.onDoubleClick();
+    expect(onOpenDirectory).toHaveBeenCalledWith(report.root.children[0]);
+    const preventDefault = vi.fn();
+    row.props.onKeyDown({ key: "Enter", preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(onOpenDirectory).toHaveBeenCalledTimes(2);
+  });
+  it("keeps direct files selectable without trying to navigate", () => {
+    const onSelectItem = vi.fn(), onOpenDirectory = vi.fn();
+    const row = findElement(TopItemsPanel({ ...panelProps({ tab: "files" }), onSelectItem, onOpenDirectory }), "top-file-row")!;
+    row.props.onClick(); row.props.onDoubleClick(); row.props.onKeyDown({ key: "Enter" });
+    expect(onSelectItem).toHaveBeenCalledWith(expect.objectContaining({ name: "notes.txt", kind: "file" }));
+    expect(onOpenDirectory).not.toHaveBeenCalled();
   });
 });

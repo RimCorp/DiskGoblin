@@ -92,12 +92,55 @@ pub fn pick_directory(
     picker()
 }
 
+/// Validate without following symlinks before invoking the system file manager.
+pub fn reveal_path_with(
+    path: PathBuf,
+    opener: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    if path.as_os_str().is_empty() || std::fs::symlink_metadata(&path).is_err() {
+        return Err("path does not exist or is inaccessible".into());
+    }
+    opener(&path)
+}
+
 #[cfg(feature = "tauri-runtime")]
 pub mod runtime {
     use super::*;
     use std::sync::Arc;
     use tauri::{AppHandle, Emitter, State};
     use tauri_plugin_dialog::DialogExt;
+
+    #[tauri::command]
+    pub async fn reveal_path(path: PathBuf) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            super::reveal_path_with(path, |path| {
+                use std::process::Command;
+                let status = if cfg!(target_os = "macos") {
+                    Command::new("open").arg("-R").arg(path).status()
+                } else if cfg!(target_os = "windows") {
+                    Command::new("explorer")
+                        .arg(format!("/select,{}", path.display()))
+                        .status()
+                } else {
+                    Command::new("xdg-open")
+                        .arg(
+                            path.parent()
+                                .filter(|p| !p.as_os_str().is_empty())
+                                .unwrap_or(std::path::Path::new(".")),
+                        )
+                        .status()
+                }
+                .map_err(|e| e.to_string())?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("reveal failed: {status}"))
+                }
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 
     impl ProgressEmitter for AppHandle {
         fn emit(&self, event: &str, progress: ScanProgress) -> Result<(), String> {
@@ -149,6 +192,25 @@ mod tests {
     use super::*;
     use diskgoblin_core::{test_fixtures::FixtureBuilder, REPORT_SCHEMA_VERSION};
     use std::{sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn reveal_validates_before_opening_and_preserves_errors() {
+        let fixture = tempfile::tempdir().unwrap();
+        assert!(reveal_path_with(fixture.path().into(), |p| {
+            assert_eq!(p, fixture.path());
+            Ok(())
+        })
+        .is_ok());
+        assert_eq!(
+            reveal_path_with(fixture.path().into(), |_| Err("opener failed".into())),
+            Err("opener failed".into())
+        );
+        assert!(reveal_path_with(fixture.path().join("missing"), |_| panic!(
+            "must not open missing path"
+        ))
+        .is_err());
+        assert!(reveal_path_with(PathBuf::new(), |_| panic!("must not open empty path")).is_err());
+    }
 
     struct TestEmitter<F>(F);
     impl<F: Fn(&str, ScanProgress) -> Result<(), String> + Send + Sync> ProgressEmitter

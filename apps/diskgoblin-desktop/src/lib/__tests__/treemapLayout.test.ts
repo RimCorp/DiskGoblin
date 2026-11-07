@@ -8,6 +8,7 @@ import {
   findAncestorChain,
   formatBytes,
   SMALL_ENTRY_RATIO,
+  getImmediateFolders, getImmediateFiles, tileFillForPath, TILE_PALETTE,
 } from "../treemapLayout";
 import type { TreemapRect } from "../treemapLayout";
 
@@ -119,22 +120,13 @@ describe("computeTreemapLayout", () => {
     expect(computeTreemapLayout(allocatedOnly, 800, 600, "allocated")).toHaveLength(1);
   });
 
-  it("renders a leaf root as a single full-canvas rectangle", () => {
+  it("shows leaf direct bytes as an explicit aggregate when files are unranked", () => {
     const leaf = dirNode("/scan/only", 4096, 4096);
+    leaf.summary.file_count = 2;
     const rects = computeTreemapLayout(leaf, 320, 240, "allocated");
     expect(rects).toHaveLength(1);
-    expect(rects[0]).toMatchObject({
-      id: "/scan/only",
-      name: "only",
-      bytes: 4096,
-      percentage: 100,
-      x0: 0,
-      y0: 0,
-      x1: 320,
-      y1: 240,
-      depth: 0,
-      isOtherBucket: false,
-    });
+    expect(rects[0]).toMatchObject({ bytes: 4096, percentage: 100, isOtherBucket: true });
+    expect(rects[0].node).toBeUndefined();
   });
 
   it("never renders zero-byte children", () => {
@@ -188,27 +180,40 @@ describe("computeTreemapLayout", () => {
     expect(rects.some((rect) => rect.isOtherBucket)).toBe(false);
   });
 
-  it("subdivides large tiles one level deeper for depth-based colouring", () => {
-    const rects = computeTreemapLayout(sampleRoot(), 800, 600, "allocated");
-    const alpha = rects.find((rect) => rect.path === "/scan/alpha" && rect.depth === 0);
-    expect(alpha).toBeDefined();
-    if (!alpha) {
-      return;
+  it("never overlays grandchildren or double counts descendant bytes", () => {
+    const root = sampleRoot();
+    const rects = computeTreemapLayout(root, 800, 600, "allocated");
+    expect(rects).toHaveLength(3);
+    expect(rects.every(rect => rect.depth === 0)).toBe(true);
+    expect(rects.reduce((sum, rect) => sum + rect.bytes, 0)).toBe(root.summary.allocated_size);
+  });
+  it("keeps zero folders discoverable and computes residual direct files in both metrics", () => {
+    const root = dirNode("/scan", 1000, 2000, [dirNode("/scan/child", 400, 800), dirNode("/scan/empty", 0, 0)]);
+    root.summary.file_count = 4;
+    root.children[0].summary.file_count = 1;
+    const files = [{ path: "/scan/a.txt", apparent_size: 200, allocated_size: 300, is_deduplicated_hardlink: false }];
+    const report = { top_files: [...files, { ...files[0], path: "/scan/child/nested" }] } as import("../../types/scan").ScanReport;
+    expect(getImmediateFolders(root, "allocated").map(item => item.name)).toEqual(["child", "empty"]);
+    for (const metric of ["allocated", "apparent"] as const) {
+      const items = getImmediateFiles(root, report, metric);
+      const aggregate = items.find(item => item.isAggregate)!;
+      expect(aggregate.groupedCount).toBe(2);
+      expect(aggregate.bytes).toBe(metric === "allocated" ? 900 : 400);
+      expect(items.some(item => item.path.endsWith("nested"))).toBe(false);
+      const rects = computeTreemapLayout(root, 800, 600, metric, files);
+      expect(rects.reduce((sum, rect) => sum + rect.bytes, 0)).toBe(metric === "allocated" ? 2000 : 1000);
+      expect(rects.reduce((sum, rect) => sum + area(rect), 0)).toBeCloseTo(800 * 600);
     }
-
-    const children = rects.filter(
-      (rect) => rect.depth === 1 && rect.path.startsWith("/scan/alpha/"),
-    );
-    expect(children.map((rect) => rect.name).sort()).toEqual(["one", "two"]);
-
-    for (const child of children) {
-      expectFiniteRects([child]);
-      expect(child.x0).toBeGreaterThanOrEqual(alpha.x0);
-      expect(child.y0).toBeGreaterThanOrEqual(alpha.y0);
-      expect(child.x1).toBeLessThanOrEqual(alpha.x1);
-      expect(child.y1).toBeLessThanOrEqual(alpha.y1);
-      expect(child.percentage).toBeCloseTo((child.bytes / 4000) * 100, 10);
+  });
+  it("assigns stable path colors independently of geometry and measurement", () => {
+    const path = "/scan/alpha";
+    const fill = tileFillForPath(path);
+    expect(TILE_PALETTE).toContain(fill);
+    for (const metric of ["allocated", "apparent"] as const) {
+      const rect = computeTreemapLayout(sampleRoot(), 1100, 720, metric).find(rect => rect.path === path)!;
+      expect(tileFillForPath(rect.path)).toBe(fill);
     }
+    expect(tileFillForPath(path, true)).toBe("#36403D");
   });
 });
 

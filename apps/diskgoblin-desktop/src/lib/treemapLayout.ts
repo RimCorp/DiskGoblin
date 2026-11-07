@@ -1,13 +1,12 @@
 import { hierarchy, treemap, treemapSquarify } from "d3-hierarchy";
 
-import type { DirNode, SizeMetric } from "../types/scan";
+import type { DirNode, FileEntry, ScanReport, SizeMetric } from "../types/scan";
 
 /**
  * A single rectangle to render inside the treemap SVG.
  *
- * `depth` is relative to the zoomed root: `0` covers the zoomed root's own
- * children, `1` covers grandchildren rendered inside their parent tile.
- * `path` and `node` are absent for synthetic "Other" buckets, which carry
+ * `depth` is always zero: every tile represents an immediate child.
+ * Synthetic buckets retain their parent path but have no `node`; they carry
  * `isOtherBucket: true` and the number of directories they hide.
  */
 export interface TreemapRect {
@@ -24,19 +23,11 @@ export interface TreemapRect {
   isOtherBucket: boolean;
   groupedCount?: number;
   node?: DirNode;
+  item?: ImmediateChildItem;
 }
 
 /** Siblings below this share of their parent's total collapse into "Other". */
 export const SMALL_ENTRY_RATIO = 0.005;
-
-/** Levels rendered per view: the zoomed root's children, plus grandchildren. */
-const MAX_DEPTH_LEVELS = 2;
-
-/** Upper bound on rectangles per view so the SVG DOM stays fast (ADR-006). */
-const MAX_RECTS = 400;
-
-/** Tiles smaller than this on either axis are not subdivided any further. */
-const MIN_EXPAND_PX = 48;
 
 const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"] as const;
 
@@ -138,246 +129,101 @@ export function findAncestorChain(root: DirNode, targetPath: string): DirNode[] 
   return [];
 }
 
-interface LeafTile {
+export const TILE_PALETTE = ["#687A3A", "#35766E", "#3E757B", "#9E6B2B", "#7F7837", "#436B5E"] as const;
+export const OTHER_TILE_FILL = "#36403D";
+export function tileFillForPath(path: string, isOtherBucket = false): string {
+  let hash = 2166136261;
+  for (const char of path) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 16), 2246822507) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 13), 3266489909) >>> 0;
+  hash = (hash ^ (hash >>> 16)) >>> 0;
+  return isOtherBucket ? OTHER_TILE_FILL : TILE_PALETTE[hash % TILE_PALETTE.length];
+}
+
+export interface ImmediateChildItem {
   id: string;
-  path: string;
   name: string;
+  path: string;
+  kind: "directory" | "file" | "aggregate";
+  apparent_size: number;
+  allocated_size: number;
   bytes: number;
-  isOtherBucket: boolean;
+  percentage: number;
+  isAggregate: boolean;
   groupedCount?: number;
   node?: DirNode;
 }
-
-interface TileNode extends LeafTile {
-  children?: TileNode[];
+export function relativePercent(bytes: number, total: number): number {
+  return Number.isFinite(bytes) && Number.isFinite(total) && total > 0
+    ? Math.min(100, Math.max(0, bytes / total * 100)) : 0;
 }
-
-interface Box {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
+function compareItems(a: ImmediateChildItem, b: ImmediateChildItem): number {
+  return b.bytes - a.bytes || a.path.localeCompare(b.path);
 }
-
-function compareTiles(a: LeafTile, b: LeafTile): number {
-  return b.bytes - a.bytes || a.id.localeCompare(b.id);
+export function getImmediateFolders(viewedFolder: DirNode, metric: SizeMetric): ImmediateChildItem[] {
+  return viewedFolder.children.map(node => ({
+    id: node.summary.path, path: node.summary.path, name: directoryLabel(node.summary.path),
+    kind: "directory" as const, apparent_size: node.summary.apparent_size,
+    allocated_size: node.summary.allocated_size, bytes: metricSize(node, metric),
+    percentage: relativePercent(metricSize(node, metric), metricSize(viewedFolder, metric)),
+    isAggregate: false, node,
+  })).sort(compareItems);
 }
-
-/**
- * Builds the tiles for one directory level: real child directories sorted by
- * size, plus a synthetic "Other" bucket when any sibling is under
- * `SMALL_ENTRY_RATIO` of the parent's total. Zero-byte children are dropped so
- * they never produce zero-area rectangles.
- */
-function buildLevelTiles(parent: DirNode, metric: SizeMetric): LeafTile[] {
-  const parentTotal = metricSize(parent, metric);
-  if (parentTotal <= 0) {
-    return [];
-  }
-
-  const children = parent.children
-    .map((child) => ({ child, bytes: metricSize(child, metric) }))
-    .filter((entry) => entry.bytes > 0)
-    .sort(
-      (a, b) =>
-        b.bytes - a.bytes || a.child.summary.path.localeCompare(b.child.summary.path),
-    );
-  if (children.length === 0) {
-    return [];
-  }
-
-  const threshold = parentTotal * SMALL_ENTRY_RATIO;
-  const tiles: LeafTile[] = [];
-  const small: Array<{ child: DirNode; bytes: number }> = [];
-
-  for (const entry of children) {
-    if (entry.bytes < threshold) {
-      small.push(entry);
-      continue;
-    }
-    const path = entry.child.summary.path;
-    tiles.push({
-      id: path,
-      path,
-      name: directoryLabel(path),
-      bytes: entry.bytes,
-      isOtherBucket: false,
-      node: entry.child,
-    });
-  }
-
-  if (small.length === 0) {
-    return tiles;
-  }
-
-  const smallBytes = small.reduce((total, entry) => total + entry.bytes, 0);
-  tiles.push({
-    id: `${parent.summary.path}::other`,
-    path: parent.summary.path,
-    name: `Other (${small.length} directories)`,
-    bytes: smallBytes,
-    isOtherBucket: true,
-    groupedCount: small.length,
+export function parentPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  return index === 0 ? "/" : normalized.slice(0, index);
+}
+export function getImmediateFiles(viewedFolder: DirNode, report: ScanReport | null, metric: SizeMetric): ImmediateChildItem[] {
+  const rootPath = viewedFolder.summary.path.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const ranked = (report?.top_files ?? []).filter(file => parentPath(file.path) === rootPath);
+  const total = metricSize(viewedFolder, metric);
+  const items: ImmediateChildItem[] = ranked.map(file => ({
+    ...file, id: file.path, name: directoryLabel(file.path), kind: "file", isAggregate: false,
+    bytes: file.is_deduplicated_hardlink ? 0 : file[metric + "_size" as "allocated_size" | "apparent_size"],
+    percentage: 0,
+  }));
+  const residual = (key: "apparent_size" | "allocated_size") => Math.max(0,
+    viewedFolder.summary[key] - viewedFolder.children.reduce((sum, node) => sum + node.summary[key], 0)
+      - ranked.reduce((sum, file) => sum + (file.is_deduplicated_hardlink ? 0 : file[key]), 0));
+  const unrankedCount = Math.max(0, viewedFolder.summary.file_count
+    - viewedFolder.children.reduce((sum, node) => sum + node.summary.file_count, 0) - ranked.length);
+  const apparent = residual("apparent_size"), allocated = residual("allocated_size");
+  const bytes = metric === "apparent" ? apparent : allocated;
+  if (bytes > 0 && unrankedCount > 0) items.push({
+    id: `${viewedFolder.summary.path}::direct`, path: viewedFolder.summary.path,
+    name: `Other direct files (${unrankedCount} files)`, kind: "aggregate", isAggregate: true,
+    apparent_size: apparent, allocated_size: allocated, bytes, groupedCount: unrankedCount, percentage: 0,
   });
-
-  return tiles.sort(compareTiles);
+  return items.map(item => ({ ...item, percentage: relativePercent(item.bytes, total) })).sort(compareItems);
 }
 
-/** Squarified layout of one level of tiles inside a `width` x `height` box. */
-function squarify(
-  tiles: LeafTile[],
-  width: number,
-  height: number,
-): Array<{ tile: LeafTile } & Box> {
-  if (tiles.length === 0 || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return [];
-  }
-  if (width <= 0 || height <= 0) {
-    return [];
-  }
-
-  const wrapper: TileNode = {
-    id: "__root__",
-    path: "",
-    name: "",
-    bytes: 0,
-    isOtherBucket: false,
-    children: tiles as TileNode[],
-  };
-
-  const layout = treemap<TileNode>()
-    .tile(treemapSquarify)
-    .size([width, height])
-    .paddingInner(0)
-    .round(false);
-
-  const laidOut = layout(
-    hierarchy<TileNode>(wrapper, (node) => node.children)
-      .sum((node) => (node.children && node.children.length > 0 ? 0 : node.bytes))
-      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0) || a.data.id.localeCompare(b.data.id)),
-  );
-
-  const boxes: Array<{ tile: LeafTile } & Box> = [];
-  for (const leaf of laidOut.leaves()) {
-    const { x0, y0, x1, y1 } = leaf;
-    if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) {
-      continue;
-    }
-    boxes.push({ tile: leaf.data, x0, y0, x1, y1 });
-  }
-  return boxes;
-}
-
-function appendLevel(
-  tiles: LeafTile[],
-  offsetX: number,
-  offsetY: number,
-  width: number,
-  height: number,
-  depth: number,
-  out: TreemapRect[],
-  metric: SizeMetric,
-  rootTotal: number,
-): void {
-  const boxes = squarify(tiles, width, height);
-
-  for (const box of boxes) {
-    const { tile } = box;
-    out.push({
-      id: tile.id,
-      path: tile.path,
-      name: tile.name,
-      bytes: tile.bytes,
-      percentage: rootTotal > 0 ? (tile.bytes / rootTotal) * 100 : 0,
-      x0: offsetX + box.x0,
-      y0: offsetY + box.y0,
-      x1: offsetX + box.x1,
-      y1: offsetY + box.y1,
-      depth,
-      isOtherBucket: tile.isOtherBucket,
-      groupedCount: tile.groupedCount,
-      node: tile.node,
-    });
-  }
-
-  if (depth + 1 >= MAX_DEPTH_LEVELS) {
-    return;
-  }
-
-  for (const box of boxes) {
-    const { tile } = box;
-    if (tile.isOtherBucket || !tile.node) {
-      continue;
-    }
-    const boxWidth = box.x1 - box.x0;
-    const boxHeight = box.y1 - box.y0;
-    if (boxWidth < MIN_EXPAND_PX || boxHeight < MIN_EXPAND_PX) {
-      continue;
-    }
-    const childTiles = buildLevelTiles(tile.node, metric);
-    if (childTiles.length < 2 || out.length + childTiles.length > MAX_RECTS) {
-      continue;
-    }
-    appendLevel(
-      childTiles,
-      offsetX + box.x0,
-      offsetY + box.y0,
-      boxWidth,
-      boxHeight,
-      depth + 1,
-      out,
-      metric,
-      rootTotal,
-    );
-  }
-}
-
-/**
- * Deterministic squarified treemap rectangles for the zoomed directory.
- *
- * Returns `[]` for non-positive or non-finite canvas sizes and for nodes whose
- * selected metric size is zero, so callers never see `NaN` coordinates.
- */
-export function computeTreemapLayout(
-  rootNode: DirNode,
-  width: number,
-  height: number,
-  metric: SizeMetric,
-): TreemapRect[] {
-  if (!rootNode || !rootNode.summary) {
-    return [];
-  }
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return [];
-  }
-
-  const rootTotal = metricSize(rootNode, metric);
-  if (rootTotal <= 0) {
-    return [];
-  }
-
-  const rootPath = rootNode.summary.path;
-  const childTiles = buildLevelTiles(rootNode, metric);
-  if (childTiles.length === 0) {
-    return [
-      {
-        id: rootPath,
-        path: rootPath,
-        name: directoryLabel(rootPath) || rootPath,
-        bytes: rootTotal,
-        percentage: 100,
-        x0: 0,
-        y0: 0,
-        x1: width,
-        y1: height,
-        depth: 0,
-        isOtherBucket: false,
-        node: rootNode,
-      },
-    ];
-  }
-
-  const rects: TreemapRect[] = [];
-  appendLevel(childTiles, 0, 0, width, height, 0, rects, metric, rootTotal);
-  return rects;
+/** One rectangle per immediate child. Descendants never overlay their ancestors. */
+export function computeTreemapLayout(rootNode: DirNode, width: number, height: number,
+  metric: SizeMetric, directFiles: FileEntry[] = []): TreemapRect[] {
+  if (![width, height].every(n => Number.isFinite(n) && n > 0) || metricSize(rootNode, metric) <= 0) return [];
+  const total = metricSize(rootNode, metric);
+  const files = getImmediateFiles(rootNode, { top_files: directFiles } as ScanReport, metric);
+  const entries = [...getImmediateFolders(rootNode, metric), ...files].filter(item => item.bytes > 0);
+  const small = entries.filter(item => item.bytes / total < SMALL_ENTRY_RATIO);
+  const tiles = entries.filter(item => item.bytes / total >= SMALL_ENTRY_RATIO);
+  if (small.length) tiles.push({
+    id: `${rootNode.summary.path}::other`, path: rootNode.summary.path,
+    name: `Other (${small.length} ${small.every(item => item.kind === "directory") ? "directories" : "items"})`,
+    bytes: small.reduce((sum, item) => sum + item.bytes, 0), kind: "aggregate", isAggregate: true,
+    apparent_size: small.reduce((sum, item) => sum + item.apparent_size, 0),
+    allocated_size: small.reduce((sum, item) => sum + item.allocated_size, 0),
+    groupedCount: small.length, percentage: 0,
+  });
+  if (!tiles.length) return [];
+  const tree = hierarchy<{ children?: ImmediateChildItem[] } & Partial<ImmediateChildItem>>({ children: tiles })
+    .sum(item => item.children ? 0 : item.bytes ?? 0)
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0) || (a.data.id ?? "").localeCompare(b.data.id ?? ""));
+  return treemap<typeof tree.data>().tile(treemapSquarify).size([width, height]).paddingInner(0)(tree)
+    .leaves().map(({ data, x0, y0, x1, y1 }) => ({
+      id: data.id!, path: data.path!, name: data.name!, bytes: data.bytes!,
+      percentage: relativePercent(data.bytes!, total), x0, y0, x1, y1, depth: 0,
+      isOtherBucket: data.isAggregate ?? false, groupedCount: data.groupedCount, node: data.node,
+      item: data as ImmediateChildItem,
+    }));
 }

@@ -226,6 +226,21 @@ fn handle(
                 .cancel();
             json!({"cancelled": true})
         }
+        ("POST", "/api/reveal") => {
+            let result = serde_json::from_slice::<serde_json::Value>(&body)
+                .map_err(|e| e.to_string())
+                .and_then(|body| {
+                    let path = body.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                    reveal_path(Path::new(path))
+                });
+            match result {
+                Ok(()) => json!({"revealed": true}),
+                Err(error) => {
+                    status = "400 Bad Request";
+                    json!({"error": error})
+                }
+            }
+        }
         ("POST", "/api/pick-directory") => {
             let path = if cfg!(target_os = "macos") {
                 Command::new("osascript").args(["-e", "POSIX path of (choose folder with prompt \"Select folder to scan with DiskGoblin\")"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
@@ -274,6 +289,36 @@ fn handle(
         &serde_json::to_vec(&value)?,
     )
 }
+fn reveal_path(path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty() || std::fs::symlink_metadata(path).is_err() {
+        return Err("path does not exist or is inaccessible".into());
+    }
+    if std::env::var_os("DISK_GOBLIN_TEST_NO_REVEAL").is_some() {
+        return Ok(());
+    }
+    let status = if cfg!(target_os = "macos") {
+        Command::new("open").arg("-R").arg(path).status()
+    } else if cfg!(target_os = "windows") {
+        Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .status()
+    } else {
+        Command::new("xdg-open")
+            .arg(
+                path.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )
+            .status()
+    }
+    .map_err(|error| format!("reveal failed: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("reveal failed: {status}"))
+    }
+}
+
 fn serve_static(stream: &mut TcpStream, request: &str, dist: &Path) -> io::Result<()> {
     let relative = Path::new(request.trim_start_matches('/'));
     if relative
@@ -386,6 +431,30 @@ mod tests {
         assert!(request(address, "GET", "/../Cargo.toml", "")
             .0
             .contains("403 Forbidden"));
+        std::env::set_var("DISK_GOBLIN_TEST_NO_REVEAL", "1");
+        let (headers, body) = request(
+            address,
+            "POST",
+            "/api/reveal",
+            &json!({"path": fixture.path().join("data.bin")}).to_string(),
+        );
+        assert!(headers.contains("200 OK"));
+        assert_eq!(body, "{\"revealed\":true}");
+        let (headers, body) = request(
+            address,
+            "POST",
+            "/api/reveal",
+            &json!({"path": fixture.path().join("missing")}).to_string(),
+        );
+        assert!(headers.contains("400 Bad Request"));
+        assert_eq!(
+            body,
+            "{\"error\":\"path does not exist or is inaccessible\"}"
+        );
+        assert!(request(address, "POST", "/api/reveal", "{\"path\":\"\"}")
+            .0
+            .contains("400 Bad Request"));
+        std::env::remove_var("DISK_GOBLIN_TEST_NO_REVEAL");
         cancel.cancel();
         worker.join().unwrap();
     }

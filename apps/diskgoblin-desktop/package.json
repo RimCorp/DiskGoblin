@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "tauri": "tauri",
-    "ui": "npm run build && cargo run --manifest-path ../../Cargo.toml -p diskgoblin-cli --bin diskgoblin -- --ui"
+    "ui": "npm run build && cargo run --manifest-path ../../Cargo.toml -p diskgoblin-cli --bin diskgoblin -- --ui",
+    "package:macos": "bash scripts/package-macos-app.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

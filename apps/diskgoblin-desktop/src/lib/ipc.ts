@@ -109,20 +109,21 @@ function dirSpec(segments: string[], apparent: number, allocated: number, fileCo
 }
 
 /**
- * Synthetic directory tree. Children always sum to their parent for both
+ * Synthetic directory tree. Child folders plus direct files sum to each parent for both
  * metrics so the treemap, breadcrumb and table numbers stay consistent.
  */
 function mockTreeSpec(): MockDirSpec {
   return {
     segments: [],
-    apparent: 6976 * MIB,
-    allocated: 7200 * MIB,
-    file_count: 4,
+    apparent: 6992 * MIB,
+    allocated: 7128 * MIB,
+    file_count: 192,
+    error_count: 2,
     children: [
-      dirSpec(["Videos"], 4096 * MIB, 4224 * MIB, 2),
-      dirSpec(["Projects"], 2048 * MIB, 2120 * MIB, 2),
+      { ...dirSpec(["Videos"], 4096 * MIB, 4192 * MIB, 3), error_count: 1, children: [dirSpec(["Videos", "Clips"], 256 * MIB, 256 * MIB, 1)] },
+      { ...dirSpec(["Projects"], 2048 * MIB, 2064 * MIB, 3), children: [dirSpec(["Projects", "Sources"], 128 * MIB, 128 * MIB, 1)] },
       {
-        ...dirSpec(["Photos"], 768 * MIB, 792 * MIB, 0),
+        ...dirSpec(["Photos"], 768 * MIB, 792 * MIB, 184),
         children: [
           dirSpec(["Photos", "2024"], 512 * MIB, 528 * MIB, 120),
           dirSpec(["Photos", "2023"], 256 * MIB, 264 * MIB, 64),
@@ -146,7 +147,7 @@ function buildDirNode(spec: MockDirSpec, base: string, depth: number): DirNode {
       apparent_size: spec.apparent,
       allocated_size: spec.allocated,
       file_count: spec.file_count,
-      dir_count: children.length,
+      dir_count: children.reduce((sum, child) => sum + 1 + child.summary.dir_count, 0),
       symlink_count: spec.symlink_count ?? 0,
       error_count: spec.error_count ?? 0,
     },
@@ -177,10 +178,13 @@ function mockTopDirectories(root: DirNode, metric: SizeMetric): DirSummary[] {
 
 function mockTopFiles(base: string, metric: SizeMetric): FileEntry[] {
   const files: FileEntry[] = [
+    { path: joinPath(base, "Videos/Clips/demo.mov"), apparent_size: 256 * MIB, allocated_size: 256 * MIB, is_deduplicated_hardlink: false },
+    { path: joinPath(base, "Projects/Sources/source.tar"), apparent_size: 128 * MIB, allocated_size: 128 * MIB, is_deduplicated_hardlink: false },
+    { path: joinPath(base, "notes.txt"), apparent_size: 16 * MIB, allocated_size: 16 * MIB, is_deduplicated_hardlink: false },
     {
       path: joinPath(base, "Videos/trip.mov"),
-      apparent_size: 3 * GIB,
-      allocated_size: 3 * GIB + 64 * MIB,
+      apparent_size: 3 * GIB - 256 * MIB,
+      allocated_size: 3 * GIB + 64 * MIB - 256 * MIB,
       is_deduplicated_hardlink: false,
     },
     {
@@ -191,19 +195,19 @@ function mockTopFiles(base: string, metric: SizeMetric): FileEntry[] {
     },
     {
       path: joinPath(base, "Projects/bundle.zip"),
-      apparent_size: 1536 * MIB,
-      allocated_size: 1552 * MIB,
+      apparent_size: 1408 * MIB,
+      allocated_size: 1424 * MIB,
       is_deduplicated_hardlink: false,
     },
     {
       path: joinPath(base, "Projects/database.dump"),
       apparent_size: 512 * MIB,
       allocated_size: 512 * MIB,
-      is_deduplicated_hardlink: true,
+      is_deduplicated_hardlink: false,
     },
     {
       path: joinPath(base, "Archive/old.tar.gz"),
-      apparent_size: 63 * MIB,
+      apparent_size: 64 * MIB,
       allocated_size: 64 * MIB,
       is_deduplicated_hardlink: false,
     },
@@ -257,7 +261,7 @@ export function createMockScanReport(options: Partial<ScanOptionsDto> = {}): Sca
 /** Mock progress snapshots (25 %, 60 %, 100 %) for a synthetic report. */
 export function createMockProgressSequence(report: ScanReport): ScanProgress[] {
   const nodes = flattenDirNodes(report.root);
-  const totalFiles = nodes.reduce((total, node) => total + node.summary.file_count, 0);
+  const totalFiles = report.root.summary.file_count;
   const totalDirs = nodes.length - 1;
 
   return MOCK_PROGRESS_FRACTIONS.map((fraction) => ({
@@ -407,4 +411,19 @@ export function resetMockScanState(): void {
   mockListeners.clear();
   mockGeneration = 0;
   cancelledGeneration = -1;
+  lastRevealedPath = null;
+}
+
+let lastRevealedPath: string | null = null;
+export function getLastRevealedPath(): string | null { return lastRevealedPath; }
+export async function revealPath(path: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<void> {
+  if (!path.trim()) throw new Error("path is required");
+  if (isTauriRuntime()) { await invoke<void>("reveal_path", { path }); return; }
+  if (isHttpBridgeEnabled()) {
+    const response = await fetchImpl("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error ?? "reveal failed");
+    return;
+  }
+  lastRevealedPath = path;
 }

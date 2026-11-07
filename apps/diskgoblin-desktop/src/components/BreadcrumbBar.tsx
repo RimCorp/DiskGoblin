@@ -1,3 +1,4 @@
+import { ItemIcon } from "./ScanToolbar";
 import type { DirNode, SizeMetric } from "../types/scan";
 import {
   buildBreadcrumbSegments,
@@ -30,13 +31,16 @@ export default function BreadcrumbBar({ ancestors, metric, onNavigate }: Breadcr
         alignItems: "center",
         gap: "0.25rem",
         padding: "0.375rem 0.5rem",
-        border: "1px solid #cbd5e1",
+        border: "1px solid #3C4741",
         borderRadius: "0.375rem",
         fontFamily: "system-ui, sans-serif",
-        fontSize: "0.8125rem",
-        background: "#f8fafc",
+        fontSize: "0.875rem",
+        fontVariantNumeric: "tabular-nums",
+        marginBottom: "12px",
+        background: "#232927",
       }}
     >
+      <ItemIcon />
       {segments.map((segment, index) => {
         const isCurrent = index === segments.length - 1;
         const label = segment.label || directoryLabel(segment.path) || segment.path;
@@ -44,7 +48,7 @@ export default function BreadcrumbBar({ ancestors, metric, onNavigate }: Breadcr
         const content = (
           <>
             <span>{label}</span>
-            <span style={{ color: "#64748b", marginLeft: "0.375rem" }}>{size}</span>
+            <span style={{ color: "#B5BDB7", marginLeft: "0.375rem" }}>{size}</span>
           </>
         );
         return (
@@ -58,7 +62,7 @@ export default function BreadcrumbBar({ ancestors, metric, onNavigate }: Breadcr
               <span
                 aria-current="page"
                 title={segment.path}
-                style={{ fontWeight: 600, color: "#0f172a" }}
+                style={{ fontWeight: 600, color: "#F2F0E5" }}
               >
                 {content}
               </span>
@@ -74,7 +78,7 @@ export default function BreadcrumbBar({ ancestors, metric, onNavigate }: Breadcr
                   border: "1px solid transparent",
                   borderRadius: "0.25rem",
                   background: "transparent",
-                  color: "#1d4ed8",
+                  color: "#F2F0E5",
                   font: "inherit",
                   cursor: "pointer",
                 }}

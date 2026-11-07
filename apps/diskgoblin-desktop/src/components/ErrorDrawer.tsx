@@ -7,9 +7,9 @@ const KIND_LABELS: Record<ScanErrorKind, string> = {
 };
 
 const KIND_COLORS: Record<ScanErrorKind, string> = {
-  permission_denied: "#b45309",
-  not_found: "#64748b",
-  io_error: "#b91c1c",
+  permission_denied: "#E1BC79",
+  not_found: "#B5BDB7",
+  io_error: "#F1A497",
 };
 
 /** Human label for a `ScanErrorRecord.kind`, falling back to the raw value. */
@@ -39,11 +39,14 @@ export default function ErrorDrawer({ errors, expanded = false, onToggle }: Erro
         display: "flex",
         flexDirection: "column",
         gap: "0.5rem",
-        border: "1px solid #f1c78a",
+        border: "1px solid #3C4741",
         borderRadius: "0.375rem",
-        background: "#fffbeb",
+        background: "#232927",
         padding: "0.5rem 0.75rem",
         fontSize: "0.8125rem",
+        fontVariantNumeric: "tabular-nums",
+        maxHeight: "180px",
+        overflowY: "auto",
       }}
     >
       <button
@@ -58,7 +61,7 @@ export default function ErrorDrawer({ errors, expanded = false, onToggle }: Erro
           border: "none",
           background: "transparent",
           font: "inherit",
-          color: "#92400e",
+          color: "#E1BC79",
           cursor: "pointer",
           textAlign: "left",
         }}
@@ -72,8 +75,8 @@ export default function ErrorDrawer({ errors, expanded = false, onToggle }: Erro
             minWidth: "1.5rem",
             padding: "0 0.375rem",
             borderRadius: "999px",
-            background: "#b45309",
-            color: "#fef3c7",
+            background: "#E1BC79",
+            color: "#181C1B",
             fontWeight: 700,
             fontSize: "0.75rem",
           }}
@@ -98,7 +101,7 @@ export default function ErrorDrawer({ errors, expanded = false, onToggle }: Erro
                 display: "flex",
                 flexDirection: "column",
                 gap: "0.125rem",
-                borderTop: index === 0 ? "none" : "1px solid #f6d9a8",
+                borderTop: index === 0 ? "none" : "1px solid #3C4741",
                 paddingTop: index === 0 ? 0 : "0.375rem",
               }}
             >
@@ -108,7 +111,7 @@ export default function ErrorDrawer({ errors, expanded = false, onToggle }: Erro
               <span style={{ color: KIND_COLORS[error.kind] ?? "#475569", fontSize: "0.75rem" }}>
                 {describeErrorKind(error.kind)}
               </span>
-              <span style={{ color: "#57534e", fontSize: "0.75rem" }}>{error.message}</span>
+              <span style={{ color: "#B5BDB7", fontSize: "0.75rem" }}>{error.message}</span>
             </li>
           ))}
         </ul>
