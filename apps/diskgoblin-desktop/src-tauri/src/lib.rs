@@ -11,6 +11,7 @@ pub fn run() -> tauri::Result<()> {
             commands::runtime::start_scan,
             commands::runtime::cancel_scan,
             commands::runtime::pick_directory,
+            commands::runtime::reveal_path,
         ])
         .run(tauri::generate_context!())
 }
