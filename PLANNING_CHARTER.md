@@ -1,5 +1,7 @@
 # DiskGoblin — Planning Charter
 
+> **Historical Context:** This document preserves the initial Milestone 0 (`M0`) planning charter prompt used to bootstrap DiskGoblin's architecture, ADRs, issue backlog (`docs/backlog/`), and coding-agent operating contract ([`AGENTS.md`](AGENTS.md)). For the implemented architecture and experimental results, see [`README.md`](README.md), [`docs/architecture.md`](docs/architecture.md), and [`docs/experiments/findings.md`](docs/experiments/findings.md).
+
 ## 1. Your mission
 
 You are the principal software architect and technical program manager for **DiskGoblin**, an open-source Rust disk-space analyzer.

@@ -2,7 +2,7 @@
 
 > **See what’s gobblin’ your disk space — from the terminal to the treemap.**
 
-**DiskGoblin** is a read-only, symlink-safe, hard-link deduplicated disk space analyzer written in Rust, with a high-performance CLI and an interactive desktop application built with **Tauri 2, React, and D3**. A shared engine tracks physical allocation and logical apparent size, supports deterministic parallel traversal, and delivers terminal tables, versioned JSON reports, and desktop treemaps. Built-in factory telemetry evaluates the autonomous development workflow alongside the application itself. The CLI can serve the same frontend over a localhost HTTP bridge; native shell integration remains gated as described below.
+**DiskGoblin** is a read-only, symlink-safe, hard-link-aware disk space analyzer written in Rust. It pairs a scriptable terminal CLI with an interactive dark desktop workspace built with **React, TypeScript, and `d3-hierarchy`**, runnable either in your browser over a dependency-free localhost HTTP bridge (`diskgoblin --ui`) or as a packaged macOS desktop app (`DiskGoblin.app`) using `AppKit` and `WKWebView`. Built-in factory telemetry (`factory_eval`) evaluates the coding-agent workflow alongside the application itself.
 
 ---
 
@@ -11,10 +11,10 @@
 ### Core & Engine
 
 - **Read-only and symlink-safe:** Traversal uses `std::fs::symlink_metadata` (`lstat`) without modifying scanned files or following symbolic links.
-- **Physical and logical sizes:** Tracks allocated bytes (`st_blocks * 512` on Unix) and apparent bytes (`st_size`); select logical sizes with `--apparent-size`.
-- **Hard-link deduplication:** Counts each Unix `(dev, ino)` identity once toward byte totals and top-file rankings, with stable first-encounter attribution.
+- **Physical and logical sizes:** Tracks allocated bytes (`st_blocks * 512` on Unix) and apparent bytes (`st_size`); select logical sizes with `--apparent-size` in the CLI or toggle between **Allocated** and **Apparent** in memory in the visual UI.
+- **Hard-link deduplication:** Counts each Unix `(dev, ino)` identity once toward byte totals and top-file rankings, with deterministic lexicographical first-encounter attribution.
 - **Mount boundary control:** Stay on the root filesystem with `-x` / `--one-file-system`.
-- **Cooperative cancellation:** `Ctrl-C` or the desktop Cancel button signals a shared cancellation token. Synthetic local-fixture tests verify **<100 ms** cancellation; blocked OS filesystem calls cannot be forcibly interrupted.
+- **Cooperative cancellation:** `Ctrl-C` or the desktop **Cancel** button signals a shared cancellation token. Synthetic local-fixture tests verify **<100 ms** cancellation; blocked OS filesystem calls cannot be forcibly interrupted mid-syscall.
 - **Versioned JSON:** `--json` emits one document with `schema_version: 1` on `stdout`, with progress suppressed.
 - **Partial scan errors:** Unreadable descendants are recorded without aborting sibling traversal; inspect paths with `--show-errors` or the desktop error drawer.
 
@@ -24,55 +24,80 @@ On non-Unix platforms, allocated size falls back to apparent size and inode-base
 
 - **Bounded Rayon thread pool:** Choose workers with `-j` / `--threads`; `1` selects the sequential reference engine, `0` selects automatic parallelism capped at eight workers, and larger values request that many workers.
 - **Deterministic lexicographical replay:** Parallel discovery replays sorted siblings in the same depth-first order as sequential traversal. Totals, hard-link attribution, rankings, and errors are identical for an unchanged filesystem; elapsed duration naturally varies.
-- **Empirical SSD benchmark study:** The [APFS/NVMe study](docs/experiments/ssd-parallel-traversal-study.md) measured up to **2.277×** speedup on its wide-tree fixture. No worker count met the 1.5× threshold across all fixtures, so **the default remains one thread**.
+- **Empirical SSD benchmark study:** The [APFS/NVMe study](docs/experiments/ssd-parallel-traversal-study.md) measured up to **2.277×** speedup on its wide-tree fixture. No worker count met the 1.5× threshold across all three fixtures, so **the default remains one thread** per [ADR-005](docs/decisions/005-parallel-traversal-strategy.md).
 
-### Interactive Desktop App — Tauri 2 + React + D3
+### Dark Desktop Workspace & Visual UI
 
-- **Interactive SVG squarified treemap:** `d3-hierarchy` computes the layout, rendered by React with hover details and breadcrumb drill-down.
-- **Scan controls:** Folder picker, editable path, and allocated/apparent size selection.
-- **Live progress banner and Cancel:** Tracks scan counts, bytes, elapsed time, and errors through the shared engine's progress interface.
-- **Top directories and files tables:** Ranked results complement the treemap, with a **partial scan error drawer** for inaccessible paths and reasons.
-
-The frontend selects native Tauri IPC, the localhost HTTP bridge, or deterministic mock IPC for a standalone preview. The Rust backend and Tauri command wiring are present, but the native WebView shell still requires integration; see the quick start below.
+- **Three-region workspace layout:**
+  - **Whole-scan header summary:** Keeps root scan totals (bytes scanned, file count, folder count, error count) visible while you drill into subdirectories.
+  - **Immediate-child treemap and ranked list:** Both the `d3-hierarchy` squarified treemap and the **Largest items** panel (**Folders** and **Files** tabs) are scoped to the currently viewed directory, using the viewed directory's byte total as the percentage bar denominator.
+  - **Bottom item inspector:** Single-clicking a tile or row selects it into the inspector bar with its full path, measured size, and a **Reveal in Finder** (`open -R`) action; double-clicking (or pressing `Enter`) drills into a folder in memory without rescanning the disk.
+- **Three-tier frontend transport (`ipc.ts`):** Automatically selects Tauri 2 IPC when present, the CLI's `127.0.0.1` HTTP bridge (`diskgoblin --ui` and `DiskGoblin.app`), or deterministic in-memory mock data (`/mock/home`) for standalone previews and tests.
 
 ### Autonomous Software Factory Evaluation
 
-The built-in **`factory_eval`** tool validates run telemetry and generates comparative Markdown tables for harness/model configurations, timing, usage, cost, and outcomes. The checked-in dataset contains **22 run records**; the published [comparative findings](docs/experiments/findings.md) analyze the original **20-run cohort**, with limitations and recommendations for interpreting the evidence.
+The built-in **`factory_eval`** tool validates run telemetry and generates comparative Markdown tables for harness/model configurations, timing, usage, cost, and outcomes. The checked-in dataset contains **22 run records**; the published [comparative findings](docs/experiments/findings.md) analyze the **20-run cohort** (`DG-001`–`DG-015` and `DG-017`), with limitations and recommendations for interpreting the evidence.
 
 ---
 
 ## Three Execution Modes
 
 1. **Terminal CLI:** `diskgoblin [PATH]` prints disk usage tables; add `--json` for a machine-readable report.
-2. **Visual Web UI:** `diskgoblin --ui [PATH]` serves the frontend on localhost and opens your browser. It automatically scans the supplied path using the CLI metric and scan settings. Use `--ui-port 0` for an automatic port or `--no-open` to open the printed URL yourself. Port 7878 is the default, with automatic fallback when occupied. Stop the server with Ctrl-C.
-3. **Native Desktop App:** `cd apps/diskgoblin-desktop && npm run tauri dev` is the native entry point, subject to the existing runtime dependency gate described below.
+2. **Browser Visual Mode:** `diskgoblin --ui [PATH]` serves the compiled frontend on `127.0.0.1` and opens your default browser. It automatically scans the supplied path using the CLI metric and scan settings. Use `--ui-port 0` for an automatic ephemeral port or `--no-open` to open the printed URL yourself. Port `7878` is the default, with automatic fallback when occupied.
+3. **macOS Desktop App (`DiskGoblin.app`):** Built via `npm run package:macos` in `apps/diskgoblin-desktop`, which packages the Rust `diskgoblin` engine and compiled web assets inside a lightweight Swift `AppKit` + `WKWebView` macOS application bundle (`apps/diskgoblin-desktop/dist-macos/DiskGoblin.app`) with custom `AppIcon.icns`, native folder picker, and Finder integration.
 
-Build the visual frontend first with `cd apps/diskgoblin-desktop && npm install && npm run build`, then launch `diskgoblin --ui /path/to/scan`. Alternatively, run `npm run ui` from `apps/diskgoblin-desktop` to build and launch together (or `npm run ui -- /path/to/scan` to scan a specific target directory). Set `DISK_GOBLIN_UI_DIST` to serve a custom frontend build. Without built assets, the server provides a built-in scan page.
+---
 
-During frontend development, `npm run dev` proxies `/api` to a separately running `diskgoblin --ui --no-open` on port 7878. A standalone `npm run preview` keeps the synthetic demo usable at `/mock/home`; real scans require the bridge or Tauri runtime.
+## Desktop & Visual UI Quick Start
 
-## Desktop App Quick Start
+### 1. Build and Package the macOS Desktop App (`DiskGoblin.app`)
 
-Use Node.js and npm for the browser preview and frontend checks. Native development additionally requires Rust and the platform's Tauri 2 build prerequisites.
+Requires macOS (Xcode Command Line Tools / `swiftc`), Rust (`1.85+`), and Node.js (`20+`):
+
+```bash
+cd apps/diskgoblin-desktop
+npm install
+npm run package:macos
+
+# Launch the packaged macOS app (defaults to your home directory, or pass a path)
+open dist-macos/DiskGoblin.app
+# Or pass a specific target folder directly to the app executable:
+./dist-macos/DiskGoblin.app/Contents/MacOS/DiskGoblin /path/to/scan
+```
+
+### 2. Launch Visual Mode in Your Browser (`diskgoblin --ui`)
 
 ```bash
 cd apps/diskgoblin-desktop
 npm install
 
-# Browser preview with mock IPC and synthetic scan data
-npm run dev
-
-# Native desktop development entry point (see current limitation below)
-npm run tauri dev
-
-# Desktop Vitest suite (watch mode)
-npm test
-
-# Type-check and build the frontend
-npm run build
+# Build the frontend and launch the CLI localhost UI server
+npm run ui -- /path/to/scan
 ```
 
-> **Native shell status:** `npm run tauri dev` is the configured native entry point, but it is not runnable as checked in: the Tauri and dialog-plugin dependencies in `src-tauri/Cargo.toml` are commented out and runtime integration remains gated. Browser preview and frontend tests work independently of that shell. The preview's folder picker and scans use mock data rather than reading your disk.
+Or build the frontend once (`npm run build` in `apps/diskgoblin-desktop`) and invoke the CLI directly from anywhere:
+
+```bash
+diskgoblin --ui /path/to/scan
+```
+
+### 3. Frontend Development & Tests
+
+```bash
+cd apps/diskgoblin-desktop
+npm install
+
+# Run the Vitest component & math test suite once
+npm test -- --run
+
+# Type-check and build the production frontend bundle
+npm run build
+
+# Start Vite dev server (uses mock data unless proxied to `diskgoblin --ui --no-open`)
+npm run dev
+```
+
+> **Note on `src-tauri`:** The repository also includes a Tauri 2 Rust command backend in [`apps/diskgoblin-desktop/src-tauri`](apps/diskgoblin-desktop/src-tauri) exposing the same scan, cancel, and progress contract. Its native Tauri crate dependencies are currently feature-gated in `src-tauri/Cargo.toml` so headless workspace verification compiles without external system GUI libraries, while `npm run package:macos` (`AppKit` + `WKWebView`) provides the primary macOS desktop app bundle.
 
 ---
 
@@ -215,10 +240,8 @@ Three components share the scanning engine, following [ADR-001](docs/decisions/0
 | Component | Responsibility |
 | :--- | :--- |
 | [`crates/diskgoblin-core`](crates/diskgoblin-core) | Pure Rust library: domain models, platform metadata, sequential and parallel traversal, cancellation/progress, aggregation, hard-link deduplication, formatting, JSON, and factory metrics. No CLI parsing or direct terminal output. |
-| [`crates/diskgoblin-cli`](crates/diskgoblin-cli) | Thin `diskgoblin` binary: argument parsing, terminal tables, JSON output, progress, and SIGINT handling; also hosts the `factory_eval` binary. |
-| [`apps/diskgoblin-desktop`](apps/diskgoblin-desktop) | React + TypeScript + Vite frontend, D3 treemap, and a separate `src-tauri` Rust backend depending directly on the core library. |
-
-The root Cargo workspace contains the two crates. The desktop backend currently declares its own Cargo workspace, so root workspace checks do not cover it.
+| [`crates/diskgoblin-cli`](crates/diskgoblin-cli) | Thin `diskgoblin` binary: argument parsing, terminal tables, JSON output, progress, SIGINT handling, and the `127.0.0.1` `--ui` HTTP bridge; also hosts the `factory_eval` binary. |
+| [`apps/diskgoblin-desktop`](apps/diskgoblin-desktop) | React 18 + TypeScript + Vite frontend, `d3-hierarchy` squarified treemap, macOS `AppKit`/`WKWebView` bundle builder (`scripts/package-macos-app.sh`), and `src-tauri` Rust command bindings. |
 
 ### Quality Gates
 
@@ -238,8 +261,6 @@ npm test -- --run
 npm run build
 ```
 
-`npm test` starts Vitest watch mode; `-- --run` runs the suite once for verification.
-
 ---
 
 ## Documentation Index
@@ -256,3 +277,10 @@ npm run build
 - [Factory comparative findings](docs/experiments/findings.md)
 - [Factory telemetry run records](docs/experiments/runs/)
 - [Agent operating contract (`AGENTS.md`)](AGENTS.md)
+- [Initial M0 planning charter](PLANNING_CHARTER.md)
+
+---
+
+## License
+
+Licensed under the [MIT License](LICENSE).
